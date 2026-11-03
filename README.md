@@ -93,7 +93,7 @@ The image excludes private environments/credential JSON and runs as a non-root u
 
 See [architecture](docs/architecture.md) and [ADR 001](docs/adr-001-data-and-service-boundaries.md).
 
-For public deployment, follow the [Railway setup guide](docs/railway-deployment.md). `railway.toml` defines the Docker build, pre-deploy Alembic migrations, dynamic HTTP port and readiness check. Database provisioning, environment secrets and GitHub integration remain dashboard setup steps.
+For public deployment, follow the [Railway setup guide](docs/railway-deployment.md). New Railway services do not consume legacy `railway.toml` files. Configure the Docker build, Alembic pre-deploy command, dynamic HTTP port and readiness check in service settings. The guide records those values and the verified deployment; Railway's newer project-level IaC is a separate future infrastructure improvement.
 
 ## Local migration evidence (2026-11-03)
 

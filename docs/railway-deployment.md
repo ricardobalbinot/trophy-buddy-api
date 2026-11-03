@@ -39,15 +39,26 @@ Do not set the workstation's `GOOGLE_APPLICATION_CREDENTIALS` file path in Railw
 
 If local browser access to the cloud API is needed, explicitly include `http://localhost:3000` in `CORS_ORIGINS`. Avoid a wildcard. Production CORS does not need the Railway API's own origin; it needs the frontend's browser origin.
 
-## 4. Deploy with repository configuration
+## 4. Configure deployment settings
 
-`railway.toml` defines:
+The current Railway dashboard reports that Config as Code (`railway.toml` / `railway.json`) is deprecated and unavailable to new services. Existing legacy configurations stop being read on 2026-12-01. A syntactically valid legacy file does not configure a new service. The obsolete repository file has been removed to avoid implying that migrations and health checks are automatic without setup.
 
-- Dockerfile builder.
-- Pre-deploy command: `/app/.venv/bin/alembic upgrade head`.
-- Uvicorn bound to `0.0.0.0` and Railway's `PORT` environment variable.
-- Readiness path `/readyz` with a 120-second startup health-check timeout.
-- Restart on failure, with up to three retries.
+In the API service's **Settings**, configure and save:
+
+| Setting | Value |
+| --- | --- |
+| Builder | Dockerfile, detected from repository root |
+| Pre-deploy command | `/app/.venv/bin/alembic upgrade head` |
+| Start command | `sh -c 'exec /app/.venv/bin/uvicorn trophy_buddy_api.app:create_app --factory --host 0.0.0.0 --port ${PORT:-8000} --no-access-log'` |
+| Healthcheck Path | `/readyz` |
+| Healthcheck Timeout | `120` seconds |
+| Restart Policy | On Failure |
+| Max restart retries | `3` |
+| API variable `PORT` | `8000`, also used as the generated domain's target port |
+
+Numeric fields can require clicking their checkmark/Save control; typing a value alone is not sufficient. Review staged changes and apply them with Deploy.
+
+Railway's replacement is project-level Infrastructure as Code, evaluated through `railway config plan/apply`, rather than a per-service TOML file read on every Git push. This initial deployment uses persisted dashboard settings. A future IaC import should preserve secret values rather than embedding them in source.
 
 No custom build command is needed. Do not run migrations during image build: the database belongs to the deployment's private network and credentials are runtime configuration. The pre-deploy command must succeed before Railway starts the new release.
 
@@ -80,6 +91,18 @@ After setup, push to `master` → GitHub Actions → Railway waits for CI → Al
 
 Enable database volume backups, review retention and monitor Railway resource usage. Keep application data on the PostgreSQL service's persistent volume, not the API container filesystem. Redeploy the API and confirm the saved library/session survive. Do not change the encryption key casually: existing encrypted sessions need the matching key.
 
+On the current workspace, the Backups page requires upgrading to Pro to create backups, schedule them or enable PITR. Automatic backups remain unconfigured; no plan upgrade was performed. Persistent storage is not a backup. Choose a paid backup option or a separately designed encrypted off-platform backup before relying on this deployment for irreplaceable data.
+
+## Verified deployment (2026-11-03)
+
+- Project: `trophy-buddy`, production environment.
+- API: [Swagger](https://trophy-buddy-api-production.up.railway.app/docs), [readiness](https://trophy-buddy-api-production.up.railway.app/readyz).
+- GitHub source: this repository's `master`; Wait for CI enabled.
+- Database: Railway PostgreSQL 18 template with persistent volume, private networking and no public database endpoint. Local and CI integration tests currently use PostgreSQL 17; live migrations and product checks also succeeded on the deployed PostgreSQL 18 instance.
+- Allowed browser origins: `https://trophy-buddy.vercel.app` and `http://localhost:3000`.
+- Firebase-authenticated cloud synchronization imported 290 games, including 19 unknown-progress entries. Persona 5 Royal returned 53 trophies and an IGDB match; repeat detail loading reused the stored snapshot. Anonymous library access returned 401 and Vercel-origin preflight returned 200.
+- The frontend migration is still local in its separate repository. Updating Vercel configuration alone cannot publish those frontend changes.
+
 ## Troubleshooting
 
 - **Pre-deploy fails:** check database reference, service name, database availability and Alembic logs. Do not bypass a failed migration to publish the app.
@@ -92,7 +115,7 @@ Enable database volume backups, review retention and monitor Railway resource us
 ## References
 
 - [FastAPI deployment](https://railway.com/guides/fastapi)
-- [Configuration as code](https://docs.railway.com/config-as-code/reference)
+- [Infrastructure as Code and legacy configuration deprecation](https://docs.railway.com/infrastructure-as-code)
 - [Pre-deploy commands](https://docs.railway.com/deployments/pre-deploy-command)
 - [GitHub autodeploys and Wait for CI](https://docs.railway.com/deployments/github-autodeploys)
 - [PostgreSQL](https://docs.railway.com/databases/postgresql)
