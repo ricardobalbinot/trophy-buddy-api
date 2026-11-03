@@ -8,6 +8,8 @@ The product remains a spoiler-aware trophy companion. Backend migration supports
 
 ## Architecture decision
 
+The accepted storage ownership and Next.js/Python boundary are specified in [ADR 001](adr-001-data-and-service-boundaries.md). PostgreSQL owns product data and Firebase Authentication owns identity. Firestore has been removed from runtime application access.
+
 Keep this Python API in its own project/repository, independent of the React frontend. Use a modular Python service with separate API and worker processes. Start with one deployable backend and clear integration boundaries; split services only when ownership, scaling or failure isolation justify it.
 
 | Responsibility         | Selected technology                         | Why it fits this product                                                                  |
@@ -28,52 +30,42 @@ Keep this Python API in its own project/repository, independent of the React fro
 | Packaging and delivery | Docker + GitHub Actions                     | Portable runtime and repeatable checks                                                    |
 | Cloud infrastructure   | AWS + Terraform                             | Reviewed infrastructure and least-privilege identity when deployment is ready             |
 
-PostgreSQL, Temporal, Bedrock, OpenTelemetry exporters, Grafana, Terraform, Storybook and Playwright are **planned**, not implemented by this first slice. Docker packaging and the GitHub Actions workflow are provided; successful hosted runs must be recorded separately after execution.
+Temporal, Bedrock, OpenTelemetry exporters, Grafana, Terraform, Storybook and Playwright remain **planned**. PostgreSQL persistence and PSN/IGDB integrations are implemented. Docker packaging and the GitHub Actions workflow are provided; successful hosted runs must be recorded separately after execution.
 
-## Implemented first slice
+## Implemented Python backend
 
-The Python service owns Firebase token validation, snapshot validation, library reads and library statistics. It reads the existing Firestore document directly; it is not an HTTP proxy to Next.js.
+The independent API now owns all previously implemented Node domain flows: Firebase token validation, library reads/statistics, public PSN imports, dedicated encrypted renewable sessions, trophy detail snapshots and optional IGDB enrichment. PostgreSQL is the only application database. Next.js owns rendering, UI, localization and login UI; its old domain routes and provider dependencies have been removed.
 
 ```mermaid
 flowchart LR
-  React[React / Next.js] -->|Firebase ID token| Python[FastAPI REST API]
-  Python --> Auth[Firebase token verification]
-  Python --> Store[Existing Firestore snapshots]
-  React -->|Existing manual import| Node[Current Next.js PSN integration]
-  Node --> Store
+  Browser[React / Next.js UI] -->|Google login| Auth[Firebase Authentication]
+  Browser -->|Firebase ID token| API[Python REST API]
+  Next[Next.js preview rendering] -->|Public metadata REST| API
+  API -->|Verify identity| Auth
+  API --> PG[(PostgreSQL)]
+  API --> PSN[PSN public data / technical OAuth]
+  API --> IGDB[IGDB / Twitch OAuth]
 ```
 
-An optional `NEXT_PUBLIC_LIBRARY_API_URL` switches only React library reads to Python. Synchronization and detailed trophy refreshes remain in Node until their adapters and orchestration are migrated. Both runtimes use the same snapshot source, avoiding dual writes and divergent stores.
+Libraries and their game entries use relational identity/progress columns, foreign keys and checks. Detail snapshots and provider metadata use validated JSONB to preserve existing cache behavior; shared normalized trophy definitions and guide models remain later domain work. See README for actual tables and endpoints.
 
-Acceptance evidence:
+Import publication is atomic and fenced by a database lease. External calls happen outside SQL transactions. Details are resolved from saved user context, and publication rejects concurrent profile/generation changes. A matching cache hit makes no PSN request. Failed imports preserve the last committed result. The current import remains synchronous; leases do not make interrupted operations durable.
 
-- Anonymous, expired and revoked sessions are rejected before storage access.
-- A client-supplied UID cannot select another user's snapshot.
-- Unknown trophy progress remains distinct from confirmed zero.
-- Earned platinum remains independent of DLC completion.
-- Existing snapshot timestamps and official percentages retain their meaning.
-- Provider failures return controlled errors and preserve the existing library.
-- OpenAPI describes the actual REST response contracts.
+No application code accesses Firestore. Existing cloud documents were not deleted; libraries can be rebuilt from PSN without a data migration. Firebase Authentication remains in use independently.
 
 ## Next deliveries, in dependency order
 
-### 1. Validate the first Python slice end to end
+### 1. Validate and deploy the migrated API independently
 
-Run the API locally, route React library reads through it, inspect the authenticated request in browser Network, and demonstrate the statistics endpoint in Swagger. Run pytest, Ruff and mypy. Build and run the container when Docker is available. Run the workflow on GitHub after an explicitly authorized push.
+Validate PostgreSQL-backed user isolation, failed import preservation, session refresh, complete pagination, cached details and React calls. Run migrations once as a release step before switching the deployed frontend API URL. Configure PostgreSQL backups, TLS/network access, bounded connection pools, HTTPS, CORS and service secrets. Container execution and cloud deployment require their own verification.
 
-### 2. Introduce PostgreSQL with a controlled data migration
+### 2. Evolve relational domains when product features require them
 
-Model users by Firebase UID; keep public PSN profile identity separate from ownership. Separate catalogue identity, user progress and guide content. Use Alembic for schema changes, unique keys for PSN title/trophy-set identities, and foreign keys for user associations. Start with PostgreSQL integration tests, not SQLite as proof of PostgreSQL behavior.
+Introduce shared game/release identities, trophy definitions and guide versions with explicit provenance and constraints. Current detailed JSONB snapshots are a deliberate cache boundary, not proof that those future models exist. Do not add unused tables simply to demonstrate a technology.
 
-Write an explicit, idempotent import from existing Firestore snapshots. Dry-run counts and compare progress before switching the source of truth. Do not let Node keep writing only Firestore after Python begins reading only PostgreSQL. Change the write path and read path together or provide one explicit temporary compatibility path. Retain a rollback path and do not delete existing data automatically.
+### 3. Harden provider operations with measured limits
 
-### 3. Migrate PSN and IGDB adapters to Python
-
-Evaluate PSNAWP against a real public profile, checking both played games and trophy titles, pagination, complete title IDs, PS4/PS5 service distinctions, detailed trophies and DLC groups. A package's existence does not prove compatibility with the current Sony endpoints.
-
-Preserve the dedicated service identity and renewable encrypted session. End users continue to supply only an Online ID. Determine whether the Python wrapper supports importing/exporting the current session; do not rely on private package fields without an explicit compatibility decision. Preserve authenticated encryption or perform an explicit session migration/reconnection. Define stable adapter contracts so wrapper details do not enter domain logic.
-
-Port IGDB OAuth, conservative catalogue matching and source attribution. Do not reinterpret campaign estimates as platinum estimates. Preserve unknown values and secret-trophy behavior.
+The Python HTTPX adapter ports the Sony endpoint behavior previously validated in Node; it does not depend on PSNAWP or private wrapper fields. Community endpoints may change. Keep transport tests, identity guards, timeouts and live smoke checks. Demonstrate session renewal and failure recovery. Coordinate aggregate provider limits across replicas before scaling beyond the MVP.
 
 ### 4. Make library imports durable with Temporal
 

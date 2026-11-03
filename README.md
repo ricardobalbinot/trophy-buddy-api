@@ -1,76 +1,102 @@
 # Trophy Buddy API
 
-Independent Python REST service for Trophy Buddy. This project has its own dependencies, environment, tests, CI workflow and container image. It does not require Node.js or read files from the frontend project.
+Independent Python REST backend for Trophy Buddy. Next.js consumes its REST contracts; it does not access the database or external game providers.
 
-## Current implementation
+## Implemented
 
-- FastAPI and Pydantic with generated OpenAPI and Swagger UI.
-- Firebase token verification with signature, expiry and revocation checks.
-- Private library reads scoped exclusively to the verified Firebase UID.
-- Trophy statistics separating unknown progress from confirmed zero and platinum from DLC completion.
-- Explicit CORS origins, private cache headers, bounded Firebase calls and request correlation.
-- pytest API/security tests, Ruff, mypy, uv and a committed lockfile.
+- FastAPI/Pydantic REST contracts and OpenAPI (`/docs`).
+- Firebase Authentication token verification, including expiration and revocation; private storage always uses the verified UID.
+- PostgreSQL, SQLAlchemy, psycopg and versioned Alembic migrations. No runtime Firestore access.
+- Public PSN profile lookup, complete played-game/trophy-title pagination and exact Sony ID association.
+- Dedicated PSN technical session, encrypted with AES-256-GCM and renewed through OAuth under a database lease.
+- Atomic library publication, cross-process import leases, cooldowns and stale-owner fencing.
+- Detailed trophy definitions, earnings, secret flags, artwork and base/DLC groups. Matching snapshots are reused until explicit refresh or library generation change.
+- Optional IGDB metadata with unique compatible name/platform matching, OAuth token reuse and a shared PostgreSQL cache. Campaign estimates never represent platinum time.
+- Statistics preserving unknown progress and official PSN percentages.
+- Controlled errors, request correlation, explicit CORS and private response caching.
+- pytest with real PostgreSQL integration tests, Ruff, mypy, Docker packaging and GitHub Actions.
 
-This first migration slice reads the existing Firestore snapshots directly. The frontend's temporary Next.js synchronization code still writes those snapshots. PostgreSQL and Python PSN workflows are subsequent deliveries; the API is not a proxy to Next.js.
+Imports remain synchronous HTTP operations, matching the working MVP. Worker crashes or request timeouts do not publish partial libraries, but an unfinished import does not resume automatically. Temporal, guide ingestion, AI processing, full OpenTelemetry and cloud deployment remain future deliveries.
 
 ## Local setup
 
-Install Python 3.12 or 3.13 and [uv](https://docs.astral.sh/uv/getting-started/installation/), then run from this project root:
+Use Python 3.12/3.13 and uv. Copy `.env.example` to `.env`, then configure:
+
+- `DATABASE_URL`: `postgresql+psycopg://USER:PASSWORD@HOST:PORT/trophy_buddy`. Standard provider `postgresql://` and `postgres://` URLs also work; the adapter selects psycopg explicitly. URL-encode special password characters.
+- Firebase project and service-account fields, or a private JSON path, for Authentication only.
+- `CORS_ORIGINS`: a JSON list such as `["http://localhost:3000"]`.
+- `PSN_TOKEN_ENCRYPTION_KEY`: a base64-encoded, random 32-byte key. Preserve it across replicas/restarts.
+- `PSN_SERVICE_NPSSO`: initial technical-account bootstrap or deliberate administrative reconnection. No PSN email/password is used. Replacing the configured NPSSO intentionally reconnects the technical identity; unchanged bootstrap values are not endless refresh fallbacks.
+- Optional IGDB Twitch application credentials.
+- `TEST_DATABASE_URL`: a separate PostgreSQL database whose name ends in `_test`. Integration tests clear that database only. Never point it at application data.
 
 ```sh
 uv sync --locked
+uv run alembic upgrade head
 uv run uvicorn trophy_buddy_api.app:create_app --factory --host 127.0.0.1 --port 8000 --no-access-log
 ```
 
-On Windows, after the environment exists, the equivalent startup command does not require uv on PATH:
+After uv creates the environment, Windows can use `.\.venv\Scripts\python.exe -m alembic upgrade head` and `.\.venv\Scripts\python.exe -m uvicorn ...` without putting Python or uv on PATH.
 
-```powershell
-.\.venv\Scripts\python.exe -m uvicorn trophy_buddy_api.app:create_app --factory --host 127.0.0.1 --port 8000 --no-access-log
-```
+For a Docker database, configure `POSTGRES_PASSWORD`, run `docker compose up -d postgres`, and point `DATABASE_URL` at port 5433. The volume persists data; the database is bound only to loopback. When using an API container, configure a database hostname reachable from that container rather than its own localhost.
 
-Restart the service after source or environment changes. Run the React frontend separately with its own package manager. The services communicate through HTTP, not filesystem imports or a shared development script.
+This workstation also has a user-local PostgreSQL 17 cluster on `127.0.0.1:5433`, installed outside both repositories. `./scripts/local-postgres.ps1 start|stop|status` manages that existing installation; other machines should use Docker Compose or their own PostgreSQL installation. It does not run as an automatically started Windows service.
 
-Swagger: http://localhost:8000/docs. Health: http://localhost:8000/healthz. Health checks process liveness only, not cloud availability.
+Run the frontend separately with `NEXT_PUBLIC_LIBRARY_API_URL=http://localhost:8000`. Each project reads only its own private environment. Restart API processes after configuration/source changes.
 
-## Configuration
+## REST contracts
 
-Copy `.env.example` to this project's private `.env` and fill `FIREBASE_PROJECT_ID` plus either service-account email/private key or `GOOGLE_APPLICATION_CREDENTIALS`. No frontend environment file is read. Never send private key values through chat or commit them.
+| Method | Path | Access | Purpose |
+| --- | --- | --- | --- |
+| GET | `/healthz` | Public | Process liveness |
+| GET | `/readyz` | Public | Database connectivity and migrated library table |
+| GET | `/api/v1/library` | Firebase bearer | Last committed `{snapshot}` or null |
+| GET | `/api/v1/library/statistics` | Firebase bearer | Confirmed statistics |
+| POST | `/api/v1/library/sync` | Firebase bearer | `{onlineId}` to imported `{snapshot}` |
+| POST | `/api/v1/library/games/{gameId}` | Firebase bearer | `{refresh: false}` to cached/imported `{details}` |
+| GET | `/api/v1/catalog?title=...&platform=PS5` | Public | Optional bounded public metadata for previews |
 
-`CORS_ORIGINS` accepts a JSON list, defaulting to `["http://localhost:3000"]`. Configure the deployed frontend origin explicitly in hosted environments. The frontend may set its optional `NEXT_PUBLIC_LIBRARY_API_URL` to this service origin. Do not point the deployed frontend at localhost.
+Supplying an Online ID never proves PSN profile ownership. Target account IDs and game identities are resolved from the authenticated user's persisted library, never accepted as storage selectors from the client. Missing/revoked sessions return 401; invalid request bodies 422; missing profiles/games 404; active leases/cooldowns/provider rate limits 429; unavailable dependencies 503. Failures do not return provider requests or credentials. Correlation IDs are returned in `X-Request-ID`.
 
-## REST contract
+Firebase and SQLAlchemy/HTTPX calls are synchronous and execute in FastAPI's thread pool using regular `def` handlers. Switching these handlers to `async def` without async adapters would block the event loop. Database transactions never span provider requests.
 
-| Method | Path                         | Authentication  | Purpose                                 |
-| ------ | ---------------------------- | --------------- | --------------------------------------- |
-| GET    | `/healthz`                   | Public          | Process liveness                        |
-| GET    | `/api/v1/library`            | Firebase bearer | Existing `{ "snapshot": ... }` contract |
-| GET    | `/api/v1/library/statistics` | Firebase bearer | Confirmed library statistics            |
-| GET    | `/docs`                      | Public          | Swagger and OpenAPI contracts           |
+## Data model
 
-Missing, invalid, expired, revoked or disabled sessions return 401. Provider configuration/network and stored-data failures return a controlled 503. Responses include `X-Request-ID` and `Cache-Control: private, no-store`. A missing library returns a null snapshot, distinct from a failed request.
+`psn_profiles` holds public profile identity. `libraries` binds one saved library to a verified Firebase UID and a profile; this association is not proof of ownership. `library_games` stores relational identity/progress columns and version-specific Sony title IDs. Compound keys, foreign keys and checks protect isolation and valid progress ranges.
 
-Synchronous Firebase SDK calls use regular `def` endpoints/dependencies, which FastAPI runs in its thread pool. Merely changing blocking SDK calls to `async def` would block the event loop. Native async HTTP adapters and durable workers follow later.
+`game_details` holds validated, versioned JSONB snapshots of details, including trophy definitions and observed earnings. This deliberately preserves the current cache-oriented behavior; it is not yet a shared normalized trophy/guide catalogue. Old snapshots can protect known earnings during failed refreshes, but only matching account/generation snapshots are served as cache hits. Removed games cascade to their details.
 
-## Checks
+`catalog_cache` shares public IGDB metadata only. `operation_leases` coordinates application imports and refreshes. `service_sessions` contains encrypted technical tokens; its encryption key lives outside PostgreSQL. New product domains such as guide versions and personal progress will have their own relational models when implemented.
+
+There is no Firestore migration requirement: users rebuild libraries with a new PSN synchronization. Existing cloud Firestore documents are untouched and no longer read or written by application code. The workstation's existing encrypted technical session was relocated once to avoid an unnecessary service reconnection; no Firestore adapter remains in the application.
+
+## Verification and deployment
 
 ```sh
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy
 uv run pytest
+uv run alembic check
 ```
 
-API tests use HTTPX's ASGI transport with the real application factory, routing, authentication dependencies, serialization and domain rules. Fake provider boundaries require no live credentials. Dedicated SDK-boundary tests check revocation options and provider failure behavior.
-
-## Container
+PostgreSQL tests apply real Alembic migrations and verify concurrent leases, fencing, foreign keys, rollback and user isolation. They skip only when no test database is configured; CI supplies PostgreSQL explicitly. Run PostgreSQL tests before release.
 
 ```sh
 docker build -t trophy-buddy-api .
+# Run migrations once as a release step, with deployment-provided environment secrets:
+docker run --rm --env-file .env trophy-buddy-api /app/.venv/bin/alembic upgrade head
 docker run --rm -p 8000:8000 --env-file .env trophy-buddy-api
 ```
 
-Use service-account fields or mount credential JSON read-only and set its **container** path. A host Windows path does not exist inside a Linux container. Private env files and credential JSON are excluded from the image. The process runs as a non-root user.
+The image excludes private environments/credential JSON and runs as a non-root user. Mount credential JSON read-only if using it; Windows host paths are not Linux container paths. Configure HTTPS, public API origin, CORS, secrets and PostgreSQL networking for deployment. Vercel alone does not deploy this API or PostgreSQL. No paid infrastructure or new hosted deployment was provisioned by this migration.
 
-The Dockerfile and GitHub Actions workflow are prepared; container execution and hosted CI need their own validation before being claimed as passing. This service deploys independently from the Vercel frontend. Cloud provisioning and paid infrastructure require a separate deployment decision.
+See [architecture](docs/architecture.md) and [ADR 001](docs/adr-001-data-and-service-boundaries.md).
 
-See [architecture and migration roadmap](docs/architecture.md) for PostgreSQL, Temporal, Bedrock, observability and the interview demonstration.
+For public deployment, follow the [Railway setup guide](docs/railway-deployment.md). `railway.toml` defines the Docker build, pre-deploy Alembic migrations, dynamic HTTP port and readiness check. Database provisioning, environment secrets and GitHub integration remain dashboard setup steps.
+
+## Local migration evidence (2026-11-03)
+
+Ruff, format checking, strict mypy, all 42 pytest tests (including real PostgreSQL), Alembic schema comparison and Python source/wheel builds passed locally. Live Firebase-authenticated HTTP requests imported 290 games, preserving 19 unknown-progress entries; Persona 5 Royal returned 53 trophies and subsequent navigation reused its snapshot. ASTRO BOT returned 63 trophies. A real PSN refresh persisted a renewed encrypted session. Anonymous private-library access returned 401. React library/detail rendering was checked in Chrome; frontend lint, type checking, i18n, all nine tests and production build passed.
+
+Docker execution and the updated hosted CI/deployment have not been validated by this local change. This evidence establishes local functionality, not a production availability claim.
