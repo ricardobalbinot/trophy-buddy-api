@@ -1,0 +1,13 @@
+.venv/
+.venv.previous/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.env*
+!.env.example
+*.egg-info/
+dist/
+build/
+*-firebase-adminsdk-*.json
+firebase-service-account*.json
