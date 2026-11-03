@@ -198,3 +198,37 @@ async def test_health_and_documentation_do_not_require_cloud_credentials(
 
     assert "/api/v1/library" in schema["paths"]
     assert schema["paths"]["/api/v1/library"]["get"]["security"]
+
+
+async def test_mutations_require_authentication_before_provider_access(client: AsyncClient) -> None:
+    for url, body in [
+        ("/api/v1/library/sync", {"onlineId": "Player"}),
+        ("/api/v1/library/games/example", {"refresh": True}),
+    ]:
+        response = await client.post(url, json=body)
+        assert response.status_code == 401
+
+
+async def test_sync_rejects_client_storage_uid_and_invalid_online_ids(client: AsyncClient) -> None:
+    for body in [
+        {"onlineId": "Player", "uid": "another-user"},
+        {"onlineId": "https://example.com"},
+        {"onlineId": "ab"},
+    ]:
+        response = await client.post(
+            "/api/v1/library/sync", json=body, headers={"Authorization": "Bearer user-a"}
+        )
+        assert response.status_code == 422
+
+
+async def test_cors_allows_authenticated_json_posts(client: AsyncClient) -> None:
+    response = await client.options(
+        "/api/v1/library/sync",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "Authorization,Content-Type",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
