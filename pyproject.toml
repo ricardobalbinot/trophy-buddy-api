@@ -1,18 +1,24 @@
 [project]
 name = "trophy-buddy-api"
-version = "0.1.0"
-description = "Authenticated REST API for Trophy Buddy libraries and trophy statistics."
+version = "0.2.0"
+description = "PostgreSQL-backed Trophy Buddy API with PSN imports, trophies and IGDB metadata."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
+  "alembic>=1.14,<2",
+  "cryptography>=44",
   "fastapi>=0.115,<1",
   "firebase-admin>=6.9,<8",
+  "httpx>=0.28,<1",
+  "psycopg[binary]>=3.2,<4",
+  "pydantic>=2.12,<3",
   "pydantic-settings>=2.6,<3",
+  "sqlalchemy>=2.0,<3",
   "uvicorn[standard]>=0.34,<1",
 ]
 
 [dependency-groups]
-dev = ["httpx>=0.28,<1", "mypy>=1.15,<2", "pytest>=8,<10", "ruff>=0.11,<1"]
+dev = ["mypy>=1.15,<2", "pytest>=8,<10", "ruff>=0.11,<1"]
 
 [build-system]
 requires = ["hatchling"]

@@ -1,7 +1,7 @@
-"""Firebase boundary for the first migration slice; no PSN or HTTP work happens at import time."""
+"""Firebase Authentication boundary and injectable private-library contract."""
 
 import firebase_admin
-from firebase_admin import auth, credentials, firestore
+from firebase_admin import auth, credentials
 from functools import cached_property
 from threading import Lock
 from trophy_buddy_api.config import Settings
@@ -25,7 +25,7 @@ class LibraryGateway(Protocol):
 
 
 class FirebaseGateway:
-    """Read existing user snapshots during the incremental Node-to-Python migration."""
+    """Verify identity through Firebase Authentication without using Firestore."""
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -88,20 +88,5 @@ class FirebaseGateway:
             auth.UserNotFoundError,
         ):
             raise InvalidSession from None
-        except Exception:
-            raise BackendUnavailable from None
-
-    def read_library(self, uid: str) -> dict[str, Any] | None:
-        """Read only this verified user's committed library with a bounded provider timeout."""
-
-        try:
-            document = (
-                firestore.client(self.app).document(f"users/{uid}/private/library").get(timeout=10)
-            )
-            payload = document.to_dict() if document.exists else None
-            if payload is not None and not isinstance(payload, dict):
-                raise BackendUnavailable
-
-            return payload
         except Exception:
             raise BackendUnavailable from None

@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     google_application_credentials: str = ""
     firebase_client_email: str = ""
     firebase_private_key: SecretStr = SecretStr("")
+    database_url: SecretStr = SecretStr("")
+    test_database_url: SecretStr = SecretStr("")
+    psn_service_npsso: SecretStr = SecretStr("")
+    psn_token_encryption_key: SecretStr = SecretStr("")
+    igdb_client_id: str = ""
+    igdb_client_secret: SecretStr = SecretStr("")
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
 
 

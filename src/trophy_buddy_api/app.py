@@ -3,21 +3,31 @@
 import logging
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
 from trophy_buddy_api.config import Settings, get_settings
+from trophy_buddy_api.database import Library
+from trophy_buddy_api.errors import ApplicationError
 from trophy_buddy_api.gateway import (
     BackendUnavailable,
-    FirebaseGateway,
     InvalidSession,
     LibraryGateway,
 )
 from trophy_buddy_api.library import calculate_statistics, read_library
-from trophy_buddy_api.models import LibraryResponse, LibraryStatistics
-from typing import Annotated, cast
+from trophy_buddy_api.models import (
+    DetailsRequest,
+    DetailsResponse,
+    LibraryResponse,
+    LibraryStatistics,
+    SyncRequest,
+)
+from trophy_buddy_api.service import ProductService
+from typing import Annotated, Any, cast
 from uuid import uuid4
 
 logger = logging.getLogger("trophy_buddy_api.requests")
@@ -50,12 +60,21 @@ def create_app(settings: Settings | None = None, gateway: LibraryGateway | None 
     """Build production and test applications through the same authentication and routing paths."""
 
     configuration = settings or get_settings()
-    app = FastAPI(title="Trophy Buddy API", version="0.1.0")
-    app.state.gateway = gateway if gateway is not None else FirebaseGateway(configuration)
+    service = ProductService(configuration)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        yield
+        if "engine" in service.database.__dict__:
+            service.database.engine.dispose()
+
+    app = FastAPI(title="Trophy Buddy API", version="0.2.0", lifespan=lifespan)
+    app.state.gateway = gateway if gateway is not None else service
+    app.state.service = service
     app.add_middleware(
         CORSMiddleware,
         allow_origins=configuration.cors_origins,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
         expose_headers=["X-Request-ID"],
     )
@@ -97,11 +116,25 @@ def create_app(settings: Settings | None = None, gateway: LibraryGateway | None 
     async def backend_unavailable(_request: Request, _error: BackendUnavailable) -> JSONResponse:
         return JSONResponse({"error": "service_unavailable"}, status_code=503)
 
+    @app.exception_handler(ApplicationError)
+    async def application_error(_request: Request, error: ApplicationError) -> JSONResponse:
+        headers = {"Retry-After": "15"} if error.status == 429 else None
+
+        return JSONResponse({"error": error.code}, status_code=error.status, headers=headers)
+
     @app.get("/healthz", tags=["Health"])
     def health() -> dict[str, str]:
         """Report process liveness without pretending that external integrations are healthy."""
 
         return {"status": "ok", "service": "trophy-buddy-api"}
+
+    @app.get("/readyz", tags=["Health"])
+    def readiness() -> dict[str, str]:
+        """Check database connectivity and a migrated table without contacting Sony or Twitch."""
+        with service.database.transaction() as session:
+            session.execute(select(Library.uid).limit(0))
+
+        return {"status": "ready"}
 
     @app.get(
         "/api/v1/library",
@@ -125,5 +158,30 @@ def create_app(settings: Settings | None = None, gateway: LibraryGateway | None 
         """Summarize confirmed trophy progress without exposing another user's saved library."""
 
         return calculate_statistics(read_library(adapter, uid))
+
+    @app.post("/api/v1/library/sync", response_model=LibraryResponse, tags=["Library"])
+    def synchronize(
+        body: SyncRequest, uid: Annotated[str, Depends(authenticated_uid)]
+    ) -> LibraryResponse:
+        """Import a public profile for the verified user, without client PSN credentials."""
+
+        return LibraryResponse(snapshot=app.state.service.synchronize(uid, body.online_id))
+
+    @app.post("/api/v1/library/games/{game_id}", response_model=DetailsResponse, tags=["Library"])
+    def game_details(
+        game_id: str, body: DetailsRequest, uid: Annotated[str, Depends(authenticated_uid)]
+    ) -> DetailsResponse:
+        """Reuse saved details; contact providers only on a miss or explicit refresh."""
+
+        return DetailsResponse(details=app.state.service.details(uid, game_id, body.refresh))
+
+    @app.get("/api/v1/catalog", tags=["Catalogue"])
+    def catalog(title: str, platform: str = "PS5") -> dict[str, Any]:
+        """Supply bounded public metadata for preview pages without provider secrets."""
+        if not 1 <= len(title) <= 200 or len(platform) > 64:
+            raise ApplicationError("invalid_catalog_query", 400)
+        result = app.state.service.catalog.get(title, platform)
+
+        return {"catalog": result.model_dump(by_alias=True, mode="json") if result else None}
 
     return app

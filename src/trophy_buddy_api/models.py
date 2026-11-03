@@ -25,7 +25,9 @@ class LibraryGame(ApiModel):
     image_url: str | None
     title_ids: list[str]
     trophy_set_id: str | None
-    trophy_service: Literal["trophy", "trophy2"] | None = None
+    trophy_service: Literal["trophy", "trophy2"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     earned: Count | None
     total: Count | None
     progress: Annotated[StrictInt, Field(ge=0, le=100)] | None
@@ -51,3 +53,60 @@ class LibraryStatistics(ApiModel):
     games_with_unknown_progress: Count
     platinum_games: Count
     known_earned_trophies: Count
+
+
+class SyncRequest(ApiModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+    online_id: str = Field(pattern=r"^[a-zA-Z][a-zA-Z0-9_-]{2,15}$")
+
+
+class DetailsRequest(ApiModel):
+    model_config = ConfigDict(extra="forbid")
+    refresh: bool = False
+
+
+class Trophy(ApiModel):
+    id: Count
+    group_id: str
+    name: str | None
+    description: str | None
+    image_url: str | None
+    type: Literal["bronze", "silver", "gold", "platinum"]
+    hidden: bool
+    earned: bool | None
+    earned_at: str | None
+    earned_rate: Annotated[float, Field(ge=0, le=100)] | None
+
+
+class TrophyGroup(ApiModel):
+    id: str
+    name: str
+
+
+class GameCatalog(ApiModel):
+    id: int
+    name: str
+    source_url: str
+    cover_url: str | None
+    release_date: str | None
+    developers: list[str]
+    publishers: list[str]
+    genres: list[str]
+    platforms: list[str]
+    main_story_hours: float | None
+
+
+class GameDetails(ApiModel):
+    version: Literal[1] = 1
+    profile: Profile
+    library_synced_at: str
+    fetched_at: str
+    game: LibraryGame
+    catalog: GameCatalog | None
+    trophies: list[Trophy]
+    groups: list[TrophyGroup]
+    trophy_status: Literal["available", "unavailable"]
+
+
+class DetailsResponse(ApiModel):
+    details: GameDetails
