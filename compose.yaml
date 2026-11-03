@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: trophy_buddy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a local PostgreSQL password}
+      POSTGRES_DB: trophy_buddy
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trophy_buddy -d trophy_buddy"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
