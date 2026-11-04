@@ -10,7 +10,7 @@ from sqlalchemy import delete, update
 from sqlalchemy.engine import make_url
 from test_api import snapshot
 from trophy_buddy_api.config import BACKEND_ROOT, Settings
-from trophy_buddy_api.database import Base, Database, Lease, LibraryEntry
+from trophy_buddy_api.database import Base, Database, Lease, LibraryEntry, User
 from trophy_buddy_api.errors import ApplicationError, Busy, NotFound
 from trophy_buddy_api.gateway import BackendUnavailable
 from trophy_buddy_api.models import LibrarySnapshot, Trophy
@@ -48,6 +48,31 @@ def test_postgres_preserves_identity_unknowns_and_exact_timestamps(database: Dat
     loaded = LibrarySnapshot.model_validate(database.read_library("user-a"))
     assert loaded == original
     assert database.read_library("user-b") is None
+
+
+def test_activity_sorting_uses_dates_nulls_last_and_stable_ties(database: Database) -> None:
+    library = seed(database)
+    default = database.read_library("user-a")
+    assert [game["id"] for game in default["games"]] == [game.id for game in library.games]
+    ascending = database.read_library("user-a", direction="asc")
+    assert [game["id"] for game in ascending["games"]] == ["zero", "trophy-NPWR00001_00", "unknown"]
+    with database.transaction() as session:
+        session.execute(update(LibraryEntry).values(last_played_at=None))
+    tied = database.read_library("user-a")
+    assert [game["id"] for game in tied["games"]] == sorted(game.id for game in library.games)
+
+
+def test_product_identity_is_independent_and_survives_library_refresh(database: Database) -> None:
+    library = seed(database)
+    with database.transaction() as session:
+        user = session.get(User, "user-a")
+        assert user is not None
+        assert user.display_name is None
+        user.display_name = "Public name"
+        session.execute(update(Lease).values(retry_after=0))
+    database.save_library("user-a", library, database.acquire("library:user-a", 60))
+    with database.transaction() as session:
+        assert session.get(User, "user-a").display_name == "Public name"
 
 
 def test_only_one_process_can_acquire_same_resource(database: Database) -> None:

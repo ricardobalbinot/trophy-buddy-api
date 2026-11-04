@@ -1,10 +1,12 @@
 """Typed API contracts compatible with the React application's existing snapshots."""
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictInt
 from pydantic.alias_generators import to_camel
 from typing import Annotated, Literal
 
 Count = Annotated[StrictInt, Field(ge=0)]
+LibrarySort = Literal["last_played_at", "trophy_progress_updated_at", "title"]
+SortDirection = Literal["asc", "desc"]
 
 
 class ApiModel(BaseModel):
@@ -32,6 +34,8 @@ class LibraryGame(ApiModel):
     total: Count | None
     progress: Annotated[StrictInt, Field(ge=0, le=100)] | None
     platinum: bool
+    last_played_at: AwareDatetime | None = None
+    trophy_progress_updated_at: AwareDatetime | None = None
 
 
 class LibrarySnapshot(ApiModel):

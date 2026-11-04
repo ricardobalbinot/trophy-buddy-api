@@ -27,7 +27,14 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from trophy_buddy_api.config import Settings
 from trophy_buddy_api.errors import ApplicationError, Busy
 from trophy_buddy_api.gateway import BackendUnavailable
-from trophy_buddy_api.models import GameDetails, LibraryGame, LibrarySnapshot, Profile
+from trophy_buddy_api.models import (
+    GameDetails,
+    LibraryGame,
+    LibrarySnapshot,
+    LibrarySort,
+    Profile,
+    SortDirection,
+)
 from typing import Any, Literal, cast
 from uuid import uuid4
 
@@ -42,9 +49,17 @@ class PublicProfile(Base):
     online_id: Mapped[str] = mapped_column(String(32))
 
 
+class User(Base):
+    """Own product data through the verified Firebase UID, independently of public PSN targets."""
+
+    __tablename__ = "users"
+    uid: Mapped[str] = mapped_column(String(128), primary_key=True)
+    display_name: Mapped[str | None] = mapped_column(String(100))
+
+
 class Library(Base):
     __tablename__ = "libraries"
-    uid: Mapped[str] = mapped_column(String(128), primary_key=True)
+    uid: Mapped[str] = mapped_column(ForeignKey("users.uid", ondelete="CASCADE"), primary_key=True)
     account_id: Mapped[str] = mapped_column(ForeignKey("psn_profiles.account_id"))
     synced_at: Mapped[str] = mapped_column(String(40))
 
@@ -64,7 +79,8 @@ class LibraryEntry(Base):
         ForeignKey("libraries.uid", ondelete="CASCADE"), primary_key=True
     )
     game_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    position: Mapped[int] = mapped_column(Integer)
+    last_played_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    trophy_progress_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     title: Mapped[str] = mapped_column(Text)
     platform: Mapped[str] = mapped_column(String(64))
     image_url: Mapped[str | None] = mapped_column(Text)
@@ -147,7 +163,17 @@ class Database:
         except Exception:
             raise BackendUnavailable from None
 
-    def read_library(self, uid: str) -> dict[str, Any] | None:
+    def read_library(
+        self, uid: str, sort: LibrarySort = "last_played_at", direction: SortDirection = "desc"
+    ) -> dict[str, Any] | None:
+        """Sort a single committed snapshot with allowlisted columns and unknown dates last."""
+        column = {
+            "last_played_at": LibraryEntry.last_played_at,
+            "trophy_progress_updated_at": LibraryEntry.trophy_progress_updated_at,
+            "title": LibraryEntry.title,
+        }[sort]
+        ordering = column.asc() if direction == "asc" else column.desc()
+
         with self.transaction() as session:
             # A single joined statement observes one committed generation at READ COMMITTED.
             rows = session.execute(
@@ -155,7 +181,7 @@ class Database:
                 .join(PublicProfile, Library.account_id == PublicProfile.account_id)
                 .outerjoin(LibraryEntry, Library.uid == LibraryEntry.uid)
                 .where(Library.uid == uid)
-                .order_by(LibraryEntry.position)
+                .order_by(ordering.nulls_last(), LibraryEntry.game_id.asc())
             ).all()
             if not rows:
                 return None
@@ -173,6 +199,8 @@ class Database:
                     total=entry.total,
                     progress=entry.progress,
                     platinum=entry.platinum,
+                    last_played_at=entry.last_played_at,
+                    trophy_progress_updated_at=entry.trophy_progress_updated_at,
                 )
                 for _, _, entry in rows
                 if entry
@@ -236,6 +264,9 @@ class Database:
         with self.transaction() as session:
             lease = self.fence(session, f"library:{uid}", operation)
             session.execute(
+                insert(User).values(uid=uid).on_conflict_do_nothing(index_elements=[User.uid])
+            )
+            session.execute(
                 insert(PublicProfile)
                 .values(
                     account_id=snapshot.profile.account_id, online_id=snapshot.profile.online_id
@@ -258,15 +289,13 @@ class Database:
                     },
                 )
             )
-            for position, game in enumerate(snapshot.games):
+            for game in snapshot.games:
                 values = game.model_dump(exclude={"id"})
-                statement = insert(LibraryEntry).values(
-                    uid=uid, game_id=game.id, position=position, **values
-                )
+                statement = insert(LibraryEntry).values(uid=uid, game_id=game.id, **values)
                 session.execute(
                     statement.on_conflict_do_update(
                         index_elements=[LibraryEntry.uid, LibraryEntry.game_id],
-                        set_={**values, "position": position},
+                        set_=values,
                     )
                 )
             session.execute(

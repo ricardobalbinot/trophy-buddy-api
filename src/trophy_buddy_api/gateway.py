@@ -5,6 +5,7 @@ from firebase_admin import auth, credentials
 from functools import cached_property
 from threading import Lock
 from trophy_buddy_api.config import Settings
+from trophy_buddy_api.models import LibrarySort, SortDirection
 from typing import Any, Protocol
 
 
@@ -21,7 +22,9 @@ class LibraryGateway(Protocol):
 
     def verify_token(self, token: str) -> str: ...
 
-    def read_library(self, uid: str) -> dict[str, Any] | None: ...
+    def read_library(
+        self, uid: str, sort: LibrarySort = "last_played_at", direction: SortDirection = "desc"
+    ) -> dict[str, Any] | None: ...
 
 
 class FirebaseGateway:

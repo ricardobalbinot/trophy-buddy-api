@@ -2,13 +2,18 @@
 
 from pydantic import ValidationError
 from trophy_buddy_api.gateway import BackendUnavailable, LibraryGateway
-from trophy_buddy_api.models import LibrarySnapshot, LibraryStatistics
+from trophy_buddy_api.models import LibrarySnapshot, LibrarySort, LibraryStatistics, SortDirection
 
 
-def read_library(gateway: LibraryGateway, uid: str) -> LibrarySnapshot | None:
+def read_library(
+    gateway: LibraryGateway,
+    uid: str,
+    sort: LibrarySort = "last_played_at",
+    direction: SortDirection = "desc",
+) -> LibrarySnapshot | None:
     """Validate persisted data and preserve unknown progress instead of inventing zeroes."""
 
-    payload = gateway.read_library(uid)
+    payload = gateway.read_library(uid, sort, direction)
     if payload is None:
         return None
 

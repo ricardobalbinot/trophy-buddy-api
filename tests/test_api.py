@@ -7,6 +7,7 @@ from httpx import ASGITransport, AsyncClient
 from trophy_buddy_api.app import create_app
 from trophy_buddy_api.config import Settings
 from trophy_buddy_api.gateway import BackendUnavailable, InvalidSession
+from trophy_buddy_api.models import LibrarySort, SortDirection
 from typing import Any
 
 pytestmark = pytest.mark.anyio
@@ -29,6 +30,7 @@ def snapshot() -> dict[str, Any]:
         "total": 10,
         "progress": 60,
         "platinum": True,
+        "lastPlayedAt": "2026-10-30T12:00:00Z",
     }
 
     return {
@@ -37,7 +39,14 @@ def snapshot() -> dict[str, Any]:
         "syncedAt": "2026-10-30T12:00:00.000Z",
         "games": [
             base,
-            {**base, "id": "zero", "earned": 0, "progress": 0, "platinum": False},
+            {
+                **base,
+                "id": "zero",
+                "earned": 0,
+                "progress": 0,
+                "platinum": False,
+                "lastPlayedAt": "2026-10-29T12:00:00Z",
+            },
             {
                 **base,
                 "id": "unknown",
@@ -45,6 +54,7 @@ def snapshot() -> dict[str, Any]:
                 "total": None,
                 "progress": None,
                 "platinum": False,
+                "lastPlayedAt": None,
             },
         ],
     }
@@ -55,6 +65,7 @@ class FakeGateway:
         self.payloads: dict[str, dict[str, Any]] = {"user-a": snapshot()}
         self.reads: list[str] = []
         self.unavailable = False
+        self.sorts: list[tuple[LibrarySort, SortDirection]] = []
 
     def verify_token(self, token: str) -> str:
         if token not in {"user-a", "user-b"}:
@@ -62,8 +73,11 @@ class FakeGateway:
 
         return token
 
-    def read_library(self, uid: str) -> dict[str, Any] | None:
+    def read_library(
+        self, uid: str, sort: LibrarySort = "last_played_at", direction: SortDirection = "desc"
+    ) -> dict[str, Any] | None:
         self.reads.append(uid)
+        self.sorts.append((sort, direction))
         if self.unavailable:
             raise BackendUnavailable
 
@@ -111,6 +125,21 @@ async def test_snapshot_contract_preserves_nulls_timestamps_and_official_progres
     assert data["games"][2]["earned"] is None
     assert "trophyService" not in data["games"][0]
     assert response.headers["cache-control"] == "private, no-store"
+
+
+async def test_library_sort_is_optional_and_validated(
+    client: AsyncClient, gateway: FakeGateway
+) -> None:
+    headers = {"Authorization": "Bearer user-a"}
+    assert (await client.get("/api/v1/library", headers=headers)).status_code == 200
+    assert gateway.sorts[-1] == ("last_played_at", "desc")
+    response = await client.get(
+        "/api/v1/library?sort=trophy_progress_updated_at&direction=asc", headers=headers
+    )
+    assert response.status_code == 200
+    assert gateway.sorts[-1] == ("trophy_progress_updated_at", "asc")
+    for query in ["sort=position", "direction=invalid"]:
+        assert (await client.get(f"/api/v1/library?{query}", headers=headers)).status_code == 422
 
 
 async def test_client_uid_cannot_select_another_users_snapshot(

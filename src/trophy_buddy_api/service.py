@@ -6,7 +6,7 @@ from trophy_buddy_api.config import Settings
 from trophy_buddy_api.database import Database
 from trophy_buddy_api.errors import ApplicationError, NotFound
 from trophy_buddy_api.gateway import FirebaseGateway
-from trophy_buddy_api.models import GameDetails, LibrarySnapshot
+from trophy_buddy_api.models import GameDetails, LibrarySnapshot, LibrarySort, SortDirection
 from trophy_buddy_api.psn import PsnClient
 from trophy_buddy_api.psn_mapping import timestamp
 from trophy_buddy_api.psn_session import PsnSessionManager
@@ -23,8 +23,10 @@ class ProductService:
     def verify_token(self, token: str) -> str:
         return self.identity.verify_token(token)
 
-    def read_library(self, uid: str) -> dict[str, Any] | None:
-        return self.database.read_library(uid)
+    def read_library(
+        self, uid: str, sort: LibrarySort = "last_played_at", direction: SortDirection = "desc"
+    ) -> dict[str, Any] | None:
+        return self.database.read_library(uid, sort, direction)
 
     def synchronize(self, uid: str, online_id: str) -> LibrarySnapshot:
         """Keep the previous library intact unless every required Sony collection validates."""

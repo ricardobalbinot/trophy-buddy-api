@@ -14,6 +14,18 @@ def timestamp() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+def provider_datetime(value: Any) -> datetime | None:
+    """Keep aware Sony timestamps in UTC; missing, invalid or naive dates remain unknown."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+        return parsed.astimezone(UTC) if parsed.tzinfo is not None else None
+    except ValueError:
+        return None
+
+
 def artwork(value: Any) -> str | None:
     """Allow HTTPS artwork only; missing or malformed artwork uses the frontend fallback."""
     if not isinstance(value, str):
@@ -55,10 +67,12 @@ def normalize_library(
                 "total": sum(title["definedTrophies"].values()),
                 "progress": max(0, min(100, progress)) if isinstance(progress, int) else None,
                 "platinum": title["earnedTrophies"].get("platinum", 0) > 0,
+                "trophyProgressUpdatedAt": provider_datetime(title.get("lastUpdatedDateTime")),
             }
         )
     for title in played:
         title_id = title["titleId"]
+        last_played_at = provider_datetime(title.get("lastPlayedDateTime"))
         matched = [
             games[f"trophy-{set_id}"]
             for set_id in links.get(title_id, [])
@@ -68,6 +82,10 @@ def normalize_library(
             for game in matched:
                 if title_id not in game.title_ids:
                     game.title_ids.append(title_id)
+                if last_played_at is not None and (
+                    game.last_played_at is None or last_played_at > game.last_played_at
+                ):
+                    game.last_played_at = last_played_at
         else:
             key = f"played-{title_id}"
             games[key] = LibraryGame(
@@ -81,9 +99,18 @@ def normalize_library(
                 total=None,
                 progress=None,
                 platinum=False,
+                last_played_at=last_played_at,
             )
 
-    return list(games.values())
+    # Match the API's default ordering, including stable ties and unknown dates last.
+    return sorted(
+        games.values(),
+        key=lambda game: (
+            game.last_played_at is None,
+            -game.last_played_at.timestamp() if game.last_played_at else 0,
+            game.id,
+        ),
+    )
 
 
 def normalize_trophies(

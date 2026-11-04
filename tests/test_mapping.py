@@ -6,7 +6,12 @@ from trophy_buddy_api.catalog import match_catalog
 from trophy_buddy_api.config import Settings
 from trophy_buddy_api.database import Database
 from trophy_buddy_api.errors import ApplicationError, ReconnectRequired
-from trophy_buddy_api.psn_mapping import artwork, normalize_library, normalize_trophies
+from trophy_buddy_api.psn_mapping import (
+    artwork,
+    normalize_library,
+    normalize_trophies,
+    provider_datetime,
+)
 from trophy_buddy_api.psn_session import PsnSessionManager
 
 
@@ -47,13 +52,30 @@ def test_library_never_joins_versions_by_display_name() -> None:
         "earnedTrophies": {"bronze": 0, "platinum": 0},
         "definedTrophies": {"bronze": 10},
         "progress": 0,
+        "lastUpdatedDateTime": "2026-10-28T12:00:00Z",
     }
-    played = [{"titleId": "PPSA00001_00", "name": "Same Game", "category": "ps5_native_game"}]
+    played = [
+        {
+            "titleId": "PPSA00001_00",
+            "name": "Same Game",
+            "category": "ps5_native_game",
+            "lastPlayedDateTime": "2026-10-29T09:00:00-03:00",
+        }
+    ]
     rows = normalize_library([trophy], played, {})
     assert len(rows) == 2
-    assert rows[0].earned == 0 and rows[1].earned is None
+    assert rows[0].earned is None and rows[1].earned == 0
+    assert rows[0].last_played_at.isoformat() == "2026-10-29T12:00:00+00:00"
+    assert rows[1].last_played_at is None
     linked = normalize_library([trophy], played, {"PPSA00001_00": ["NPWR00001_00"]})
     assert len(linked) == 1 and linked[0].title_ids == ["PPSA00001_00"]
+    assert linked[0].last_played_at == rows[0].last_played_at
+    assert linked[0].trophy_progress_updated_at == rows[1].trophy_progress_updated_at
+
+
+@pytest.mark.parametrize("value", [None, "", "invalid", "2026-10-29T12:00:00", 123])
+def test_unknown_provider_dates_are_not_invented(value: object) -> None:
+    assert provider_datetime(value) is None
 
 
 def test_catalog_requires_unique_compatible_name_and_preserves_edition() -> None:

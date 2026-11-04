@@ -23,7 +23,9 @@ from trophy_buddy_api.models import (
     DetailsRequest,
     DetailsResponse,
     LibraryResponse,
+    LibrarySort,
     LibraryStatistics,
+    SortDirection,
     SyncRequest,
 )
 from trophy_buddy_api.service import ProductService
@@ -145,10 +147,12 @@ def create_app(settings: Settings | None = None, gateway: LibraryGateway | None 
     def library(
         uid: Annotated[str, Depends(authenticated_uid)],
         adapter: Annotated[LibraryGateway, Depends(get_gateway)],
+        sort: LibrarySort = "last_played_at",
+        direction: SortDirection = "desc",
     ) -> LibraryResponse:
         """Return the signed-in user's last committed snapshot using the existing React contract."""
 
-        return LibraryResponse(snapshot=read_library(adapter, uid))
+        return LibraryResponse(snapshot=read_library(adapter, uid, sort, direction))
 
     @app.get("/api/v1/library/statistics", response_model=LibraryStatistics, tags=["Library"])
     def statistics(

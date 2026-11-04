@@ -62,7 +62,9 @@ Firebase and SQLAlchemy/HTTPX calls are synchronous and execute in FastAPI's thr
 
 ## Data model
 
-`psn_profiles` holds public profile identity. `libraries` binds one saved library to a verified Firebase UID and a profile; this association is not proof of ownership. `library_games` stores relational identity/progress columns and version-specific Sony title IDs. Compound keys, foreign keys and checks protect isolation and valid progress ranges.
+`users` holds product identity through the verified Firebase UID and an optional public display name. Rows are created on successful library imports; a profile editor is not implemented yet. `psn_profiles` holds independent public PSN identities. `libraries` binds one user to one saved public profile; this association is not proof of ownership. `library_games` stores relational identity/progress columns, version-specific Sony title IDs and nullable timezone-aware activity dates. Compound keys, foreign keys and checks protect isolation and valid progress ranges.
+
+`GET /api/v1/library` defaults to `sort=last_played_at&direction=desc`. Optional sort values are `last_played_at`, `trophy_progress_updated_at` and `title`; direction accepts `asc` or `desc`. PostgreSQL orders unknown values last and breaks ties by game ID. `lastPlayedAt` and `trophyProgressUpdatedAt` are returned as nullable ISO timestamps. A trophy progress update may represent a first sync with zero earnings, not an earned trophy. Existing rows retain unknown dates until the next PSN sync; former list positions cannot reconstruct them.
 
 `game_details` holds validated, versioned JSONB snapshots of details, including trophy definitions and observed earnings. This deliberately preserves the current cache-oriented behavior; it is not yet a shared normalized trophy/guide catalogue. Old snapshots can protect known earnings during failed refreshes, but only matching account/generation snapshots are served as cache hits. Removed games cascade to their details.
 

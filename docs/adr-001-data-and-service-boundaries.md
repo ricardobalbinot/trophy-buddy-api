@@ -21,7 +21,7 @@ Keep a modular Python backend in its independent repository, with API and worker
 | Information | Target owner and storage | Important boundary |
 | --- | --- | --- |
 | Google login, authentication identity and login lifecycle | Firebase Authentication | Python verifies Firebase ID tokens; authentication does not require Firestore. |
-| Application users, preferences and permissions | Python / PostgreSQL | An internal user ID maps uniquely to the verified Firebase UID. |
+| Application users, preferences and permissions | Python / PostgreSQL | Current `users.uid` is the verified Firebase UID; public PSN identities remain independent. |
 | Public PSN profiles and a user's saved profile associations | Python / PostgreSQL | A saved association is not proof that the user owns the PSN profile. |
 | Games, platform releases, external IDs and catalogue matches | Python / PostgreSQL | Preserve distinct PSN releases/trophy sets; uncertain IGDB matches remain unlinked. |
 | Trophy definitions, groups and imported public progress | Python / PostgreSQL | Definitions and observed profile progress are distinct from personal app actions. |
