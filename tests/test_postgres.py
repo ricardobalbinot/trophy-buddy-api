@@ -293,7 +293,9 @@ def test_guide_binding_requires_review_and_invalidates_only_changed_records(
         assert load_guide(session, game) is None
 
 
-def test_curated_resources_survive_imports_and_drafts_are_private(database: Database) -> None:
+def test_curated_resources_survive_imports_and_drafts_are_private(
+    database: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
     library = seed(database)
     details = detailed_snapshot(library)
     resource = f"details:user-a:{details.game.id}"
@@ -314,7 +316,9 @@ def test_curated_resources_survive_imports_and_drafts_are_private(database: Data
     with database.transaction() as session:
         save_resource(session, draft, publish=True)
         session.execute(update(Lease).values(retry_after=0))
-    database.save_details("user-a", details, database.acquire(resource, 60))
-    imported = database.read_details("user-a", details.game.id)
+    service = ProductService(Settings(_env_file=None), database)
+    monkeypatch.setattr(service.psn, "trophies", lambda *_: (details.trophies, details.groups))
+    imported = service.details("user-a", details.game.id, True)
     assert len(imported.trophies[0].resources) == 1
     assert imported.trophies[0].resources[0].contains_spoilers is True
+    assert service.details("user-a", details.game.id, False).trophies == imported.trophies

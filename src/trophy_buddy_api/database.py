@@ -31,7 +31,6 @@ from trophy_buddy_api.gateway import BackendUnavailable
 from trophy_buddy_api.guide_index import load_guide
 from trophy_buddy_api.models import (
     GameDetails,
-    GuideOverview,
     LibraryGame,
     LibrarySnapshot,
     LibrarySort,
@@ -325,7 +324,7 @@ class Database:
 
             return details.model_copy(update={"guide": load_guide(session, details.game)})
 
-    def save_details(self, uid: str, details: GameDetails, operation: str) -> GuideOverview | None:
+    def save_details(self, uid: str, details: GameDetails, operation: str) -> GameDetails:
         """Fence publication against lease replacement and library changes."""
         with self.transaction() as session:
             lease = self.fence(session, f"details:{uid}:{details.game.id}", operation)
@@ -358,7 +357,15 @@ class Database:
             lease.lease_until = 0
             lease.retry_after = time.time() + 60
 
-            return load_guide(session, details.game)
+            trophies, groups = load_trophies(session, uid, details.game.id)
+
+            return details.model_copy(
+                update={
+                    "guide": load_guide(session, details.game),
+                    "trophies": trophies,
+                    "groups": groups,
+                }
+            )
 
     def session_state(self) -> dict[str, Any] | None:
         with self.transaction() as session:

@@ -84,9 +84,7 @@ class ProductService:
                 groups=groups,
                 trophy_status="available" if game.trophy_set_id else "unavailable",
             )
-            guide = self.database.save_details(uid, result, operation)
-
-            return result.model_copy(update={"guide": guide})
+            return self.database.save_details(uid, result, operation)
         except Exception as error:
             self.database.release(resource, operation)
             if isinstance(error, ApplicationError):
