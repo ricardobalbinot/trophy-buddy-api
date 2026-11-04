@@ -2,7 +2,7 @@
 
 Date: 2026-11-03
 
-Status: Activity ordering and product identities implemented locally. Trophy and guide normalization is proposed, not implemented.
+Status: Activity ordering, product identities and normalized trophy storage implemented and locally verified. Guide resources remain the next delivery.
 
 ## Activity and ordering
 
@@ -16,17 +16,17 @@ Keep `users` distinct from `psn_profiles`. The verified Firebase UID currently i
 
 A library is a saved association to a public PSN profile, not an ownership claim. Multiple users may consult the same profile. Do not copy PSN identifiers into the product user's primary key or treat a queried profile as the user's verified identity. Additional product profile fields and relational badges can be introduced with their features; no profile editing endpoint exists yet.
 
-## Proposed relational trophy and guide model
+## Relational trophy model and guide evolution
 
-The current `game_details.payload` is a validated response snapshot, not the desired authoritative trophy catalogue. Snapshot replacement supports today's whole-game reads but duplicates shared definitions and makes per-trophy content, foreign keys and cross-profile queries awkward.
+`game_details.payload` retains import metadata and optional catalogue data. Trophy definitions and earned states have been removed from JSONB and migrated into relational tables. The REST response remains compatible.
 
-Introduce shared `trophy_sets`, `trophy_groups` and `trophies`, uniquely scoped by provider/service, set and provider trophy ID. A provider title ID, trophy-set ID and IGDB game ID represent different identities. Never join trophy records by display name or trophy ID alone.
+Shared `trophy_sets`, `trophy_groups` and `trophies` are uniquely scoped by service, set and provider trophy ID. Older observations cannot overwrite newer shared definitions. A provider title ID, trophy-set ID and IGDB game ID represent different identities. Never join trophy records by display name or trophy ID alone.
 
-Store observed PSN earnings in `profile_trophies`, keyed by the public PSN account and trophy identity. Keep `earned` nullable until confirmed, preserve earned timestamps, and record observation freshness. These facts come from Sony; user-created checklists and annotations are separate product-user state. Guide publication must not change when a PSN snapshot is refreshed.
+`profile_trophies` records PSN account identity and relational trophy identity, scoped to the owning UID/game import. This intentionally preserves each saved library's observation rather than letting another user's sync silently change its cached progress. `detail_trophy_groups` records the groups observed in that import. Both cascade with private details; shared definitions survive. Unknown earned states remain nullable and observation freshness comes from the parent import. These facts come from Sony; user-created checklists and annotations are separate product-user state. Guide publication must not change when a PSN snapshot is refreshed.
 
 Attach curated help through `trophy_resources` and guide versions, with a trophy foreign key, resource type, source URL, language, timestamps and publication/review status. Video links and text should not be embedded in replaceable provider payloads. Regional/platform trophy sets require explicit applicability rather than title-name guesses.
 
-Migrate existing validated snapshots transactionally before making normalized tables authoritative. Preserve UID authorization, snapshot generations, known earnings, concealment rules and stale-writer fencing. A JSON response can remain the REST contract even after its source becomes relational. Keeping a redundant detail cache should depend on measured need and an explicit invalidation policy.
+The reversible Alembic migration backfills legacy snapshots transactionally before removing their trophy/group arrays. Real PostgreSQL tests exercise upgrade, downgrade, refresh, isolation and cascades. Preserve UID authorization, snapshot generations, known earnings, concealment rules and stale-writer fencing. A JSON response can remain the REST contract even after its source becomes relational. Keeping a redundant detail cache should depend on measured need and an explicit invalidation policy.
 
 ## Catalogue and coordination
 

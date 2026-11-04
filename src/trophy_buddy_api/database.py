@@ -23,8 +23,9 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.engine import Engine, make_url
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+from sqlalchemy.orm import Mapped, Session, mapped_column
 from trophy_buddy_api.config import Settings
+from trophy_buddy_api.db_base import Base
 from trophy_buddy_api.errors import ApplicationError, Busy
 from trophy_buddy_api.gateway import BackendUnavailable
 from trophy_buddy_api.models import (
@@ -35,12 +36,9 @@ from trophy_buddy_api.models import (
     Profile,
     SortDirection,
 )
+from trophy_buddy_api.trophy_storage import load_trophies, save_trophies
 from typing import Any, Literal, cast
 from uuid import uuid4
-
-
-class Base(DeclarativeBase):
-    pass
 
 
 class PublicProfile(Base):
@@ -309,9 +307,19 @@ class Database:
 
     def read_details(self, uid: str, game_id: str) -> GameDetails | None:
         with self.transaction() as session:
-            entry = session.get(DetailSnapshot, (uid, game_id))
+            # Keep metadata and its child observations stable throughout reconstruction.
+            entry = session.scalar(
+                select(DetailSnapshot)
+                .where(DetailSnapshot.uid == uid, DetailSnapshot.game_id == game_id)
+                .with_for_update(read=True)
+            )
+            if entry is None:
+                return None
+            trophies, groups = load_trophies(session, uid, game_id)
 
-            return GameDetails.model_validate(entry.payload) if entry else None
+            return GameDetails.model_validate(
+                {**entry.payload, "trophies": trophies, "groups": groups}
+            )
 
     def save_details(self, uid: str, details: GameDetails, operation: str) -> None:
         """Fence publication against lease replacement and library changes."""
@@ -329,13 +337,20 @@ class Database:
                 .values(
                     uid=uid,
                     game_id=details.game.id,
-                    payload=details.model_dump(by_alias=True, mode="json"),
+                    payload=details.model_dump(
+                        by_alias=True, mode="json", exclude={"trophies", "groups"}
+                    ),
                 )
                 .on_conflict_do_update(
                     index_elements=[DetailSnapshot.uid, DetailSnapshot.game_id],
-                    set_={"payload": details.model_dump(by_alias=True, mode="json")},
+                    set_={
+                        "payload": details.model_dump(
+                            by_alias=True, mode="json", exclude={"trophies", "groups"}
+                        )
+                    },
                 )
             )
+            save_trophies(session, uid, details)
             lease.lease_until = 0
             lease.retry_after = time.time() + 60
 

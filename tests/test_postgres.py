@@ -6,15 +6,16 @@ from alembic import command
 from alembic.config import Config
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
-from sqlalchemy import delete, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.engine import make_url
 from test_api import snapshot
 from trophy_buddy_api.config import BACKEND_ROOT, Settings
-from trophy_buddy_api.database import Base, Database, Lease, LibraryEntry, User
+from trophy_buddy_api.database import Base, Database, DetailSnapshot, Lease, LibraryEntry, User
 from trophy_buddy_api.errors import ApplicationError, Busy, NotFound
 from trophy_buddy_api.gateway import BackendUnavailable
-from trophy_buddy_api.models import LibrarySnapshot, Trophy
+from trophy_buddy_api.models import GameDetails, LibrarySnapshot, Trophy, TrophyGroup
 from trophy_buddy_api.service import ProductService
+from trophy_buddy_api.trophy_storage import ProfileTrophy, TrophyDefinition
 
 
 @pytest.fixture
@@ -157,4 +158,93 @@ def test_details_cache_scoping_and_profile_change_fence(
     database.save_library("user-a", changed, database.acquire("library:user-a", 60))
     with pytest.raises(Busy):
         database.save_details("user-a", details, operation)
+    assert database.read_details("user-a", details.game.id) == details
+
+
+def detailed_snapshot(library: LibrarySnapshot, earned: bool | None = False) -> GameDetails:
+    return GameDetails(
+        profile=library.profile,
+        library_synced_at=library.synced_at,
+        fetched_at="2026-11-04T12:00:00.000Z",
+        game=library.games[0],
+        catalog=None,
+        trophy_status="available",
+        groups=[TrophyGroup(id="default", name="Base game")],
+        trophies=[
+            Trophy(
+                id=0,
+                group_id="default",
+                name="Secret",
+                description="Hidden action",
+                image_url=None,
+                type="bronze",
+                hidden=True,
+                earned=earned,
+                earned_at="2026-11-04T10:00:00.000Z" if earned else None,
+                earned_rate=12.5,
+            )
+        ],
+    )
+
+
+def test_relational_trophies_share_definitions_but_isolate_imports(database: Database) -> None:
+    library = seed(database)
+    second = seed(database, "user-b")
+    first_details = detailed_snapshot(library, True)
+    second_details = detailed_snapshot(second, False)
+    for uid, details in [("user-a", first_details), ("user-b", second_details)]:
+        database.save_details(
+            uid, details, database.acquire(f"details:{uid}:{details.game.id}", 60)
+        )
+    assert database.read_details("user-a", library.games[0].id) == first_details
+    assert database.read_details("user-b", library.games[0].id) == second_details
+    assert database.read_details("user-c", library.games[0].id) is None
+    with database.transaction() as session:
+        assert session.scalar(select(func.count()).select_from(TrophyDefinition)) == 1
+        assert session.scalar(select(func.count()).select_from(ProfileTrophy)) == 2
+        payload = session.get(DetailSnapshot, ("user-a", library.games[0].id)).payload
+        assert "trophies" not in payload and "groups" not in payload
+
+
+def test_trophy_refresh_replaces_progress_and_cascades_only_private_observations(
+    database: Database,
+) -> None:
+    library = seed(database)
+    details = detailed_snapshot(library)
+    resource = f"details:user-a:{details.game.id}"
+    database.save_details("user-a", details, database.acquire(resource, 60))
+    with database.transaction() as session:
+        session.execute(update(Lease).values(retry_after=0))
+    changed = detailed_snapshot(library, True)
+    database.save_details("user-a", changed, database.acquire(resource, 60))
+    assert database.read_details("user-a", details.game.id).trophies[0].earned is True
+    with database.transaction() as session:
+        session.execute(delete(LibraryEntry).where(LibraryEntry.uid == "user-a"))
+        assert session.scalar(select(func.count()).select_from(ProfileTrophy)) == 0
+        assert session.scalar(select(func.count()).select_from(TrophyDefinition)) == 1
+
+
+def test_legacy_details_migration_round_trip_preserves_trophies(database: Database) -> None:
+    library = seed(database)
+    details = detailed_snapshot(library, True)
+    configuration = Config(str(BACKEND_ROOT / "alembic.ini"))
+    with database.engine.begin() as connection:
+        configuration.attributes["connection"] = connection
+        command.downgrade(configuration, "b84e03fa721c")
+        connection.execute(
+            DetailSnapshot.__table__.insert().values(
+                uid="user-a",
+                game_id=details.game.id,
+                payload=details.model_dump(by_alias=True, mode="json"),
+            )
+        )
+        command.upgrade(configuration, "head")
+        command.check(configuration)
+    assert database.read_details("user-a", details.game.id) == details
+    with database.engine.begin() as connection:
+        configuration.attributes["connection"] = connection
+        command.downgrade(configuration, "b84e03fa721c")
+        payload = connection.scalar(select(DetailSnapshot.payload))
+        assert payload["trophies"][0]["earned"] is True
+        command.upgrade(configuration, "head")
     assert database.read_details("user-a", details.game.id) == details
