@@ -70,6 +70,8 @@ Firebase and SQLAlchemy/HTTPX calls are synchronous and execute in FastAPI's thr
 
 `catalog_cache` shares public IGDB metadata only. `operation_leases` coordinates application imports and refreshes. `service_sessions` contains encrypted technical tokens; its encryption key lives outside PostgreSQL. New product domains such as guide versions and personal progress will have their own relational models when implemented.
 
+`guide_index_versions`, `indexed_guides` and `guide_bindings` provide versioned external guide metadata with explicit review against Sony identities. `trophy_resources` stores published curated videos/articles independently of PSN progress. Details include optional `guide` metadata and per-trophy `resources`; older frontend contracts remain compatible. See [guide ingestion](docs/guide-ingestion.md) for operator commands, uncertainty rules and the remaining roadmap, and [data relationships](docs/data-model.md) for the current diagram. No provider or LLM request is needed to read these persisted guide fields.
+
 There is no Firestore migration requirement: users rebuild libraries with a new PSN synchronization. Existing cloud Firestore documents are untouched and no longer read or written by application code. The workstation's existing encrypted technical session was relocated once to avoid an unnecessary service reconnection; no Firestore adapter remains in the application.
 
 ## Verification and deployment

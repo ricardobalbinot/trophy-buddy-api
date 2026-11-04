@@ -69,6 +69,16 @@ class DetailsRequest(ApiModel):
     refresh: bool = False
 
 
+class TrophyResource(ApiModel):
+    id: str
+    title: str
+    source_url: str
+    source_name: str
+    kind: Literal["video", "article"]
+    language: str
+    contains_spoilers: bool
+
+
 class Trophy(ApiModel):
     id: Count
     group_id: str
@@ -80,6 +90,7 @@ class Trophy(ApiModel):
     earned: bool | None
     earned_at: str | None
     earned_rate: Annotated[float, Field(ge=0, le=100)] | None
+    resources: list[TrophyResource] = Field(default_factory=list)
 
 
 class TrophyGroup(ApiModel):
@@ -100,6 +111,21 @@ class GameCatalog(ApiModel):
     main_story_hours: float | None
 
 
+class GuideOverview(ApiModel):
+    title: str
+    source_name: str
+    source_url: str
+    index_url: str
+    retrieved_at: AwareDatetime
+    reviewed_at: AwareDatetime
+    difficulty: float | None
+    playthroughs: float | None
+    platinum_hours: float | None
+    missables: Literal["confirmed_some", "unknown"]
+    online: Literal["confirmed_some", "unknown"]
+    buggy: Literal["confirmed_some", "unknown"]
+
+
 class GameDetails(ApiModel):
     version: Literal[1] = 1
     profile: Profile
@@ -110,6 +136,7 @@ class GameDetails(ApiModel):
     trophies: list[Trophy]
     groups: list[TrophyGroup]
     trophy_status: Literal["available", "unavailable"]
+    guide: GuideOverview | None = None
 
 
 class DetailsResponse(ApiModel):

@@ -2,7 +2,7 @@
 
 Date: 2026-11-03
 
-Status: Activity ordering, product identities and normalized trophy storage implemented and locally verified. Guide resources remain the next delivery.
+Status: Activity ordering, product identities and normalized trophy storage implemented and locally verified. Versioned guide discovery and curated trophy resources are also implemented; see guide-ingestion.md for the remaining evidence/AI workflow.
 
 ## Activity and ordering
 
@@ -24,7 +24,7 @@ Shared `trophy_sets`, `trophy_groups` and `trophies` are uniquely scoped by serv
 
 `profile_trophies` records PSN account identity and relational trophy identity, scoped to the owning UID/game import. This intentionally preserves each saved library's observation rather than letting another user's sync silently change its cached progress. `detail_trophy_groups` records the groups observed in that import. Both cascade with private details; shared definitions survive. Unknown earned states remain nullable and observation freshness comes from the parent import. These facts come from Sony; user-created checklists and annotations are separate product-user state. Guide publication must not change when a PSN snapshot is refreshed.
 
-Attach curated help through `trophy_resources` and guide versions, with a trophy foreign key, resource type, source URL, language, timestamps and publication/review status. Video links and text should not be embedded in replaceable provider payloads. Regional/platform trophy sets require explicit applicability rather than title-name guesses.
+`trophy_resources` attaches curated help with a trophy foreign key, resource type, source URL, language, review time and publication status. Guide discovery has source/record hashes and explicit reviewed bindings; full guide-body revisions and per-trophy claims remain future work. Video links and text should not be embedded in replaceable provider payloads. Regional/platform trophy sets require explicit applicability rather than title-name guesses.
 
 The reversible Alembic migration backfills legacy snapshots transactionally before removing their trophy/group arrays. Real PostgreSQL tests exercise upgrade, downgrade, refresh, isolation and cascades. Preserve UID authorization, snapshot generations, known earnings, concealment rules and stale-writer fencing. A JSON response can remain the REST contract even after its source becomes relational. Keeping a redundant detail cache should depend on measured need and an explicit invalidation policy.
 

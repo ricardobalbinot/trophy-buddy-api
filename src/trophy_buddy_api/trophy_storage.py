@@ -18,6 +18,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 from trophy_buddy_api.db_base import Base
 from trophy_buddy_api.models import GameDetails, LibraryGame, Trophy, TrophyGroup
 from trophy_buddy_api.psn_mapping import provider_datetime
+from trophy_buddy_api.trophy_resources import load_resources
 from typing import Any, Literal, cast
 
 
@@ -131,7 +132,7 @@ def save_trophies(session: Session, uid: str, details: GameDetails) -> None:
     session.execute(insert(TrophySet).values(**identity).on_conflict_do_nothing())
     groups: dict[str, str | None] = {row.group_id: None for row in details.trophies}
     groups.update({row.id: row.name for row in details.groups})
-    for group_id, name in groups.items():
+    for group_id, name in sorted(groups.items()):
         values = {**identity, "group_id": group_id, "name": name, "observed_at": observed}
         statement = insert(TrophyGroupDefinition).values(**values)
         session.execute(
@@ -148,9 +149,9 @@ def save_trophies(session: Session, uid: str, details: GameDetails) -> None:
         )
     for group in details.groups:
         session.add(DetailTrophyGroup(uid=uid, game_id=game.id, group_id=group.id, **identity))
-    for trophy in details.trophies:
+    for trophy in sorted(details.trophies, key=lambda row: row.id):
         definition_values: dict[str, Any] = trophy.model_dump(
-            exclude={"id", "earned", "earned_at", "earned_rate"}
+            exclude={"id", "earned", "earned_at", "earned_rate", "resources"}
         )
         definition_values.update(identity, trophy_id=trophy.id, observed_at=observed)
         statement = insert(TrophyDefinition).values(**definition_values)
@@ -198,6 +199,7 @@ def load_trophies(
         .where(ProfileTrophy.uid == uid, ProfileTrophy.game_id == game_id)
         .order_by(TrophyDefinition.trophy_id)
     ).all()
+    resources = load_resources(session, rows[0][0].service, rows[0][0].set_id) if rows else {}
     trophies = [
         Trophy(
             id=definition.trophy_id,
@@ -210,6 +212,7 @@ def load_trophies(
             earned=progress.earned,
             earned_at=progress.earned_at,
             earned_rate=progress.earned_rate,
+            resources=resources.get(definition.trophy_id, []),
         )
         for definition, progress in rows
     ]

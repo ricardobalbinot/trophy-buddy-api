@@ -47,7 +47,7 @@ flowchart LR
   API --> IGDB[IGDB / Twitch OAuth]
 ```
 
-Libraries and their game entries use relational identity/progress columns, foreign keys and checks. Trophy sets, groups, definitions and per-import profile earnings now use relational tables. Detail import metadata and optional provider catalogue snapshots retain validated JSONB. Guide models remain the next domain delivery. See README for actual tables and endpoints.
+Libraries and their game entries use relational identity/progress columns, foreign keys and checks. Trophy sets, groups, definitions and per-import profile earnings now use relational tables. Detail import metadata and optional provider catalogue snapshots retain validated JSONB. Versioned guide discovery, reviewed trophy-set bindings and curated resources are implemented. Detailed guide claims and personal checkpoints remain the next domain delivery. See README for actual tables and endpoints.
 
 Import publication is atomic and fenced by a database lease. External calls happen outside SQL transactions. Details are resolved from saved user context, and publication rejects concurrent profile/generation changes. A matching cache hit makes no PSN request. Failed imports preserve the last committed result. The current import remains synchronous; leases do not make interrupted operations durable.
 

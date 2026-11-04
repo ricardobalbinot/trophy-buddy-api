@@ -13,8 +13,10 @@ from trophy_buddy_api.config import BACKEND_ROOT, Settings
 from trophy_buddy_api.database import Base, Database, DetailSnapshot, Lease, LibraryEntry, User
 from trophy_buddy_api.errors import ApplicationError, Busy, NotFound
 from trophy_buddy_api.gateway import BackendUnavailable
+from trophy_buddy_api.guide_index import bind_guide, load_guide, parse_index, save_index
 from trophy_buddy_api.models import GameDetails, LibrarySnapshot, Trophy, TrophyGroup
 from trophy_buddy_api.service import ProductService
+from trophy_buddy_api.trophy_resources import ResourceDraft, save_resource
 from trophy_buddy_api.trophy_storage import ProfileTrophy, TrophyDefinition
 
 
@@ -248,3 +250,71 @@ def test_legacy_details_migration_round_trip_preserves_trophies(database: Databa
         assert payload["trophies"][0]["earned"] is True
         command.upgrade(configuration, "head")
     assert database.read_details("user-a", details.game.id) == details
+
+
+def test_guide_binding_requires_review_and_invalidates_only_changed_records(
+    database: Database,
+) -> None:
+    library = seed(database)
+    game = library.games[0]
+    details = detailed_snapshot(library)
+    database.save_details("user-a", details, database.acquire(f"details:user-a:{game.id}", 60))
+    payload = {
+        "123": {
+            "a": 1 | 32 | 512 | 16384,
+            "n": "Example Game Trophy Guide",
+            "g": [12],
+            "r": [2, 1, 120],
+            "u": ["Author"],
+            "t": [10],
+        }
+    }
+    with database.transaction() as session:
+        save_index(session, "a" * 64, parse_index(payload, "a" * 64))
+        assert load_guide(session, game) is None
+
+        with pytest.raises(ValueError):
+            bind_guide(
+                session,
+                game.model_copy(update={"platform": "PS4"}),
+                "psnprofiles:123",
+                "Reviewed title, platform and trophy count.",
+            )
+        bind_guide(session, game, "psnprofiles:123", "Reviewed title, platform and trophy count.")
+    overview = database.read_details("user-a", game.id).guide
+    assert overview is not None and overview.missables == "confirmed_some"
+    assert overview.online == "unknown" and overview.platinum_hours == 120
+    with database.transaction() as session:
+        save_index(session, "b" * 64, parse_index(payload, "b" * 64))
+        assert load_guide(session, game) is not None
+    changed = {"123": {**payload["123"], "r": [3, 2, 180]}}
+    with database.transaction() as session:
+        save_index(session, "c" * 64, parse_index(changed, "c" * 64))
+        assert load_guide(session, game) is None
+
+
+def test_curated_resources_survive_imports_and_drafts_are_private(database: Database) -> None:
+    library = seed(database)
+    details = detailed_snapshot(library)
+    resource = f"details:user-a:{details.game.id}"
+    database.save_details("user-a", details, database.acquire(resource, 60))
+    draft = ResourceDraft(
+        service="trophy2",
+        set_id=details.game.trophy_set_id,
+        trophy_id=0,
+        title="External help",
+        source_name="Guide author",
+        source_url="https://example.com/help",
+        kind="article",
+        language="en",
+    )
+    with database.transaction() as session:
+        save_resource(session, draft)
+    assert database.read_details("user-a", details.game.id).trophies[0].resources == []
+    with database.transaction() as session:
+        save_resource(session, draft, publish=True)
+        session.execute(update(Lease).values(retry_after=0))
+    database.save_details("user-a", details, database.acquire(resource, 60))
+    imported = database.read_details("user-a", details.game.id)
+    assert len(imported.trophies[0].resources) == 1
+    assert imported.trophies[0].resources[0].contains_spoilers is True
