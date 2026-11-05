@@ -6,6 +6,7 @@ from trophy_buddy_api.config import Settings
 from trophy_buddy_api.database import Database
 from trophy_buddy_api.errors import ApplicationError, NotFound
 from trophy_buddy_api.gateway import FirebaseGateway
+from trophy_buddy_api.library import trophy_library
 from trophy_buddy_api.models import GameDetails, LibrarySnapshot, LibrarySort, SortDirection
 from trophy_buddy_api.psn import PsnClient
 from trophy_buddy_api.psn_mapping import timestamp
@@ -37,7 +38,7 @@ class ProductService:
                 raise ApplicationError("invalid_psn_identity")
             self.database.save_library(uid, snapshot, operation)
 
-            return snapshot
+            return trophy_library(snapshot)
         except Exception as error:
             self.database.release(f"library:{uid}", operation)
             if isinstance(error, ApplicationError):
@@ -53,7 +54,7 @@ class ProductService:
             raise NotFound
         library = LibrarySnapshot.model_validate(payload)
         game = next((entry for entry in library.games if entry.id == game_id), None)
-        if game is None:
+        if game is None or not game.trophy_set_id:
             raise NotFound
         previous = self.database.read_details(uid, game_id)
         same_context = (
@@ -62,7 +63,7 @@ class ProductService:
             and previous.library_synced_at == library.synced_at
         )
         if not refresh and same_context and previous is not None:
-            return previous
+            return self.database.prepare_guide(previous)
         resource = f"details:{uid}:{game_id}"
         operation = self.database.acquire(resource, 300)
         try:

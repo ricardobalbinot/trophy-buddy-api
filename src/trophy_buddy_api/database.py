@@ -28,6 +28,7 @@ from trophy_buddy_api.config import Settings
 from trophy_buddy_api.db_base import Base
 from trophy_buddy_api.errors import ApplicationError, Busy
 from trophy_buddy_api.gateway import BackendUnavailable
+from trophy_buddy_api.guide_discovery import discover_guide
 from trophy_buddy_api.guide_index import load_guide
 from trophy_buddy_api.models import (
     GameDetails,
@@ -324,6 +325,11 @@ class Database:
 
             return details.model_copy(update={"guide": load_guide(session, details.game)})
 
+    def prepare_guide(self, details: GameDetails) -> GameDetails:
+        """Resolve shared guide metadata after the caller has verified saved-library context."""
+        with self.transaction() as session:
+            return discover_guide(session, details)
+
     def save_details(self, uid: str, details: GameDetails, operation: str) -> GameDetails:
         """Fence publication against lease replacement and library changes."""
         with self.transaction() as session:
@@ -341,14 +347,30 @@ class Database:
                     uid=uid,
                     game_id=details.game.id,
                     payload=details.model_dump(
-                        by_alias=True, mode="json", exclude={"trophies", "groups", "guide"}
+                        by_alias=True,
+                        mode="json",
+                        exclude={
+                            "trophies",
+                            "groups",
+                            "guide",
+                            "guide_discovery",
+                            "guide_analysis",
+                        },
                     ),
                 )
                 .on_conflict_do_update(
                     index_elements=[DetailSnapshot.uid, DetailSnapshot.game_id],
                     set_={
                         "payload": details.model_dump(
-                            by_alias=True, mode="json", exclude={"trophies", "groups", "guide"}
+                            by_alias=True,
+                            mode="json",
+                            exclude={
+                                "trophies",
+                                "groups",
+                                "guide",
+                                "guide_discovery",
+                                "guide_analysis",
+                            },
                         )
                     },
                 )
@@ -359,12 +381,15 @@ class Database:
 
             trophies, groups = load_trophies(session, uid, details.game.id)
 
-            return details.model_copy(
-                update={
-                    "guide": load_guide(session, details.game),
-                    "trophies": trophies,
-                    "groups": groups,
-                }
+            return discover_guide(
+                session,
+                details.model_copy(
+                    update={
+                        "guide": load_guide(session, details.game),
+                        "trophies": trophies,
+                        "groups": groups,
+                    }
+                ),
             )
 
     def session_state(self) -> dict[str, Any] | None:

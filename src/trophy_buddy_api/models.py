@@ -112,6 +112,7 @@ class GameCatalog(ApiModel):
 
 
 class GuideOverview(ApiModel):
+    match_method: str = "manual"
     title: str
     source_name: str
     source_url: str
@@ -137,6 +138,8 @@ class GameDetails(ApiModel):
     groups: list[TrophyGroup]
     trophy_status: Literal["available", "unavailable"]
     guide: GuideOverview | None = None
+    guide_discovery: str = "pending"
+    guide_analysis: str = "not_requested"
 
 
 class DetailsResponse(ApiModel):

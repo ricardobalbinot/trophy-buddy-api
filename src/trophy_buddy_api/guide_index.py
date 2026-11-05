@@ -92,6 +92,7 @@ class GuideBinding(Base):
     platform: Mapped[str] = mapped_column(String(16))
     reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     rationale: Mapped[str] = mapped_column(Text)
+    match_method: Mapped[str] = mapped_column(String(16), server_default="manual")
 
 
 class IndexRecord(BaseModel):
@@ -110,8 +111,8 @@ def game_name(title: str) -> str:
         re.sub(r"\s+", " ", re.sub(r"\s+trophy guide$", "", title, flags=re.I))
         .strip()
         .casefold()
-        .replace("™", "")
-        .replace("®", "")
+        .replace("â„¢", "")
+        .replace("Â®", "")
     )
 
 
@@ -218,7 +219,13 @@ def save_index(session: Session, digest: str, rows: list[dict[str, Any]]) -> Non
         )
 
 
-def bind_guide(session: Session, game: LibraryGame, entry_id: str, rationale: str) -> None:
+def bind_guide(
+    session: Session,
+    game: LibraryGame,
+    entry_id: str,
+    rationale: str,
+    match_method: str = "manual",
+) -> None:
     """Require explicit review plus matching edition, platform and known trophy count."""
     guide = session.get(IndexedGuide, entry_id)
     flag = PLATFORM_FLAGS.get(game.platform)
@@ -243,6 +250,7 @@ def bind_guide(session: Session, game: LibraryGame, entry_id: str, rationale: st
         platform=game.platform,
         reviewed_at=datetime.now(UTC),
         rationale=rationale,
+        match_method=match_method,
     )
     session.execute(
         insert(GuideBinding)
@@ -276,6 +284,7 @@ def load_guide(session: Session, game: LibraryGame) -> GuideOverview | None:
     binding, guide, version = row
 
     return GuideOverview(
+        match_method=binding.match_method,
         title=guide.title,
         source_name=guide.source_name,
         source_url=guide.url,

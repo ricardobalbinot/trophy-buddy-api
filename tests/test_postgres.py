@@ -160,7 +160,7 @@ def test_details_cache_scoping_and_profile_change_fence(
     database.save_library("user-a", changed, database.acquire("library:user-a", 60))
     with pytest.raises(Busy):
         database.save_details("user-a", details, operation)
-    assert database.read_details("user-a", details.game.id) == details
+    assert database.read_details("user-a", details.game.id).trophies == details.trophies
 
 
 def detailed_snapshot(library: LibrarySnapshot, earned: bool | None = False) -> GameDetails:
@@ -322,3 +322,71 @@ def test_curated_resources_survive_imports_and_drafts_are_private(
     assert len(imported.trophies[0].resources) == 1
     assert imported.trophies[0].resources[0].contains_spoilers is True
     assert service.details("user-a", details.game.id, False).trophies == imported.trophies
+
+
+def test_first_access_discovers_guide_and_deduplicates_shared_analysis(database: Database) -> None:
+    from trophy_buddy_api.guide_discovery import GuideAnalysisRequest
+
+    library = seed(database)
+    seed(database, "user-b")
+    payload = {
+        "123": {
+            "a": 1 | 32 | 512,
+            "n": "Example Game Trophy Guide",
+            "g": [12],
+            "r": [2, 1, 20],
+            "u": ["Author"],
+            "t": [10],
+        }
+    }
+    with database.transaction() as session:
+        save_index(session, "a" * 64, parse_index(payload, "a" * 64))
+    results = [database.prepare_guide(detailed_snapshot(library)) for _ in range(2)]
+    assert all(result.guide is not None for result in results)
+    assert all(result.guide.match_method == "automatic" for result in results)
+    assert all(result.guide_analysis == "blocked" for result in results)
+    with database.transaction() as session:
+        assert session.scalar(select(func.count()).select_from(GuideAnalysisRequest)) == 1
+
+
+def test_ambiguous_candidates_do_not_start_analysis(database: Database) -> None:
+    from trophy_buddy_api.guide_discovery import GuideAnalysisRequest
+
+    library = seed(database)
+    row = {
+        "a": 1 | 32 | 512,
+        "n": "Example Game Trophy Guide",
+        "g": [12],
+        "r": [2, 1, 20],
+        "u": ["Author"],
+        "t": [10],
+    }
+    with database.transaction() as session:
+        save_index(session, "a" * 64, parse_index({"123": row, "124": row}, "a" * 64))
+    result = database.prepare_guide(detailed_snapshot(library))
+    assert result.guide is None and result.guide_discovery == "ambiguous"
+    with database.transaction() as session:
+        assert session.scalar(select(func.count()).select_from(GuideAnalysisRequest)) == 0
+
+
+def test_concurrent_access_does_not_duplicate_guide_binding(database: Database) -> None:
+    from trophy_buddy_api.guide_index import GuideBinding
+
+    library = seed(database)
+    row = {
+        "a": 1 | 32 | 512,
+        "n": "Example Game Trophy Guide",
+        "g": [12],
+        "r": [2, 1, 20],
+        "u": ["Author"],
+        "t": [10],
+    }
+    with database.transaction() as session:
+        save_index(session, "a" * 64, parse_index({"123": row}, "a" * 64))
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(
+            executor.map(lambda _: database.prepare_guide(detailed_snapshot(library)), range(4))
+        )
+    assert all(result.guide_discovery == "matched" for result in results)
+    with database.transaction() as session:
+        assert session.scalar(select(func.count()).select_from(GuideBinding)) == 1

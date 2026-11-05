@@ -18,9 +18,16 @@ def read_library(
         return None
 
     try:
-        return LibrarySnapshot.model_validate(payload)
+        return trophy_library(LibrarySnapshot.model_validate(payload))
     except ValidationError:
         raise BackendUnavailable from None
+
+
+def trophy_library(snapshot: LibrarySnapshot) -> LibrarySnapshot:
+    """Expose only entries with a confirmed trophy set, even for older saved imports."""
+    games = [game for game in snapshot.games if game.trophy_set_id]
+
+    return snapshot.model_copy(update={"games": games})
 
 
 def calculate_statistics(snapshot: LibrarySnapshot | None) -> LibraryStatistics:

@@ -44,3 +44,12 @@ Reimporting the same source is idempotent. Import failures happen before publica
 5. **Real contextual Companion:** combine reviewed requirements with PSN observations and explicit player context. Persist personal checklist/checkpoint actions separately from Sony achievements. Trophies alone do not establish story position.
 
 No scraping bypass, automatic guide-body republication, Bedrock call or contextual checklist is implemented in this delivery. The existing fictional Companion remains separate.
+
+
+## On-demand discovery
+
+Detail requests now resolve guide metadata from the local index on both cache hits and fresh PSN imports. Matching requires the exact normalized edition name, a compatible platform flag and a known equal trophy count. Source priority is PSNProfiles, PowerPyx, PlayStationTrophies, PlatGet, then Knoef. Multiple candidates within the preferred available source remain ambiguous. An automatic association is explicitly labeled automatic, not a manual editorial review.
+
+`guide_discoveries` serializes concurrent first access by Sony service/set. Negative and ambiguous outcomes have a six-hour retry window. Existing stale bindings require review instead of silent reassociation. The current index must be administratively imported before discovery can find candidates. No guide page, search engine or LLM is called by discovery.
+
+`guide_analysis_requests` persists one shared intent per guide record hash and extraction schema version. Requests currently remain `blocked` with reason `analysis_worker_not_configured`. There is no running extractor, background worker, retry executor or completion publisher yet. These records are a durable handoff boundary for the next worker delivery, not a claim that background analysis is already functioning. The details contract exposes `guideDiscovery` and `guideAnalysis`; the frontend distinguishes automatic matching, missing candidates, ambiguous candidates and stale associations.
