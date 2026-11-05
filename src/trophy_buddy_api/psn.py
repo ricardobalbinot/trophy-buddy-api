@@ -3,9 +3,22 @@
 import httpx
 import re
 import time
+from pydantic import ValidationError
 from trophy_buddy_api.errors import ApplicationError, ReconnectRequired
-from trophy_buddy_api.models import LibraryGame, LibrarySnapshot, Profile, Trophy, TrophyGroup
-from trophy_buddy_api.psn_mapping import normalize_library, normalize_trophies, timestamp
+from trophy_buddy_api.models import (
+    LibraryGame,
+    LibrarySnapshot,
+    Profile,
+    Trophy,
+    TrophyGroup,
+    TrophyProfileSummary,
+)
+from trophy_buddy_api.psn_mapping import (
+    avatar_artwork,
+    normalize_library,
+    normalize_trophies,
+    timestamp,
+)
 from trophy_buddy_api.psn_session import PsnSessionManager
 from typing import Any
 
@@ -99,6 +112,19 @@ class PsnClient:
 
         raise ApplicationError("psn_pagination_limit")
 
+    def trophy_profile_summary(
+        self, client: httpx.Client, session: dict[str, Any], account_id: str
+    ) -> TrophyProfileSummary | None:
+        """Treat unavailable public totals as missing without failing the library import."""
+        try:
+            data = self.request(client, session, f"trophy/v1/users/{account_id}/trophySummary")
+            if str(data.get("accountId", "")) != account_id:
+                return None
+
+            return TrophyProfileSummary.model_validate({**data, "level": data.get("trophyLevel")})
+        except (ApplicationError, ValidationError):
+            return None
+
     def import_library(self, online_id: str) -> LibrarySnapshot:
         session = self.sessions.get()
         with httpx.Client(timeout=15) as client:
@@ -160,9 +186,30 @@ class PsnClient:
                         row["npCommunicationId"] for row in title.get("trophyTitles", [])
                     ]
 
+            summary = self.trophy_profile_summary(client, session, account_id)
+
+        avatars = profile.get("avatars")
+        avatar_url = (
+            next(
+                (
+                    url
+                    for avatar in avatars
+                    if isinstance(avatar, dict) and (url := avatar_artwork(avatar.get("url")))
+                ),
+                None,
+            )
+            if isinstance(avatars, list)
+            else None
+        )
+
         return LibrarySnapshot(
             version=1,
-            profile=Profile(account_id=account_id, online_id=profile["onlineId"]),
+            profile=Profile(
+                account_id=account_id,
+                online_id=profile["onlineId"],
+                avatar_url=avatar_url,
+                trophy_summary=summary,
+            ),
             synced_at=timestamp(),
             games=normalize_library(titles, played, links),
         )

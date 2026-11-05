@@ -42,6 +42,16 @@ def artwork(value: Any) -> str | None:
         return None
 
 
+def avatar_artwork(value: Any) -> str | None:
+    """Upgrade legacy avatar links from Sony's CDN, which also serves them over HTTPS."""
+    if isinstance(value, str) and value.startswith(
+        "http://static-resource.np.community.playstation.net/"
+    ):
+        value = "https://" + value.removeprefix("http://")
+
+    return artwork(value)
+
+
 def normalize_library(
     titles: list[dict[str, Any]], played: list[dict[str, Any]], links: dict[str, list[str]]
 ) -> list[LibraryGame]:

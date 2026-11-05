@@ -37,6 +37,7 @@ from trophy_buddy_api.models import (
     LibrarySort,
     Profile,
     SortDirection,
+    TrophyProfileSummary,
 )
 from trophy_buddy_api.trophy_storage import load_trophies, save_trophies
 from typing import Any, Literal, cast
@@ -47,6 +48,8 @@ class PublicProfile(Base):
     __tablename__ = "psn_profiles"
     account_id: Mapped[str] = mapped_column(String(32), primary_key=True)
     online_id: Mapped[str] = mapped_column(String(32))
+    avatar_url: Mapped[str | None] = mapped_column(Text)
+    trophy_summary: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
 
 
 class User(Base):
@@ -208,7 +211,16 @@ class Database:
 
             return LibrarySnapshot(
                 version=1,
-                profile=Profile(account_id=profile.account_id, online_id=profile.online_id),
+                profile=Profile(
+                    account_id=profile.account_id,
+                    online_id=profile.online_id,
+                    avatar_url=profile.avatar_url,
+                    trophy_summary=(
+                        TrophyProfileSummary.model_validate(profile.trophy_summary)
+                        if profile.trophy_summary is not None
+                        else None
+                    ),
+                ),
                 synced_at=library.synced_at,
                 games=games,
             ).model_dump(by_alias=True, mode="json", exclude_none=False)
@@ -266,14 +278,22 @@ class Database:
             session.execute(
                 insert(User).values(uid=uid).on_conflict_do_nothing(index_elements=[User.uid])
             )
+            profile = snapshot.profile
+            profile_values = {
+                "online_id": profile.online_id,
+                "avatar_url": profile.avatar_url,
+                "trophy_summary": (
+                    profile.trophy_summary.model_dump(mode="json")
+                    if profile.trophy_summary is not None
+                    else None
+                ),
+            }
             session.execute(
                 insert(PublicProfile)
-                .values(
-                    account_id=snapshot.profile.account_id, online_id=snapshot.profile.online_id
-                )
+                .values(account_id=profile.account_id, **profile_values)
                 .on_conflict_do_update(
                     index_elements=[PublicProfile.account_id],
-                    set_={"online_id": snapshot.profile.online_id},
+                    set_=profile_values,
                 )
             )
             session.execute(

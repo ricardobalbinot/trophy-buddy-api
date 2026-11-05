@@ -15,9 +15,26 @@ class ApiModel(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="ignore")
 
 
+class TrophyCounts(ApiModel):
+    bronze: Count
+    silver: Count
+    gold: Count
+    platinum: Count
+
+
+class TrophyProfileSummary(ApiModel):
+    level: Annotated[int, Field(ge=1, le=999)]
+    progress: Annotated[StrictInt, Field(ge=0, le=100)]
+    earned_trophies: TrophyCounts
+
+
 class Profile(ApiModel):
     online_id: str = Field(min_length=1)
     account_id: str = Field(pattern=r"^\d+$")
+    avatar_url: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    trophy_summary: TrophyProfileSummary | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class LibraryGame(ApiModel):
